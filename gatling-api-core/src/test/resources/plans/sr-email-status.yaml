@@ -1,0 +1,65 @@
+# Login per virtual user (from CSV) -> once per test: load-filter-data gives a list ->
+# each virtual user takes one item, checks its status, and while it is PENDING asks how long
+# to wait, waits that long, and checks again.
+name: sr-email-status
+baseUrl: ${BASE_URL:http://localhost:18080}
+include: [ apis/sr.yaml ]
+
+dataSources:
+  users: { file: data/users.csv, strategy: queue }      # one unique login per virtual user
+
+auth:                       # every scenario (and setup) logs in this way unless it says otherwise
+  type: login
+  api: login
+  token: $.token
+  refreshBefore: 2s         # logs in again shortly before the JWT expires
+
+setup:                      # runs once (per worker) before the load starts
+  vars: { username: setup-user, password: secret }
+  steps:
+    - api: loadFilterData
+      extract:
+        srList: { jsonPath: "$.items[*].srId", all: true }
+  share:
+    srQueue: { from: srList, as: sr }    # one item per virtual user, split across workers
+
+scenarios:
+  - name: sr-status-check
+    feeders: [ users, srQueue ]
+    steps:
+      - transaction: sr-end-to-end
+        steps:
+          - api: getSrStatus
+            extract: { email: $.email, status: $.status }
+          - pollUntil:
+              condition: "#{status} != 'PENDING'"
+              maxAttempts: 6
+              timeout: 1m
+              failMessage: SR did not leave PENDING   # shown in the report's errors if the poll gives up
+              steps:
+                - api: getWaitTime
+                  extract: { waitSeconds: $.waitSeconds }
+                - wait: { duration: "#{waitSeconds}s", max: 30s }
+                - api: getSrStatus
+                  extract: { email: $.email, status: $.status }
+      - log: "#{sr} -> #{status} (#{email})"
+    load:
+      profile:
+        - rampUsers: { users: 30, during: 5s }
+
+  - name: filter-data-only          # a single API under load, with a locally minted JWT
+    auth:
+      type: jwt
+      secret: ${JWT_SECRET:test-secret}
+      claims: { sub: load-tester, scope: read }
+      validity: 10m
+    steps:
+      - api: loadFilterData
+    load:
+      profile:
+        - constantUsersPerSec: { rate: 5, during: 6s }
+
+sla:
+  - global.failedRequests.percent < 1
+  - api.getSrStatus.responseTime.p95 < 500ms
+  - transaction.sr-end-to-end.failed.percent < 5

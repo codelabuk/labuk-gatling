@@ -1,0 +1,27 @@
+# API catalog: each API is defined once and reused by any plan.
+# Nothing here is special to the framework - these are ordinary YAML definitions.
+apis:
+  login:
+    request: POST /auth/login
+    body:
+      json: { username: "#{username}", password: "#{password}" }
+    checks:
+      - status: 200
+
+  loadFilterData:
+    request: POST /sr/load-filter-data
+    body:
+      json: { region: "ALL" }
+    checks:
+      - status: 200
+      - jsonPath: $.items
+
+  getSrStatus:
+    request: GET /sr/#{sr}/status
+    checks:
+      - status: 200
+
+  getWaitTime:
+    request: GET /sr/#{sr}/wait-time
+    checks:
+      - status: 200

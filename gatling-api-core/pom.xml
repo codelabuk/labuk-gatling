@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.codelabuk</groupId>
+        <artifactId>labuk-gatling</artifactId>
+        <version>1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>gatling-api-core</artifactId>
+    <name>gatling-api-core</name>
+    <description>Generic, YAML-driven Gatling engine: testers write YAML plans, no code.</description>
+
+    <properties>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <scala.version>2.13.15</scala.version>
+        <scala.binary.version>2.13</scala.binary.version>
+        <!-- Gatling 3.13.1 is built against Scala 2.13.15 -->
+        <gatling.version>3.13.1</gatling.version>
+        <!-- must match the Jackson version Gatling 3.13.1 ships with -->
+        <jackson.version>2.18.1</jackson.version>
+        <gatling-maven-plugin.version>4.12.2</gatling-maven-plugin.version>
+        <scala-maven-plugin.version>4.9.2</scala-maven-plugin.version>
+        <scalatest.version>3.2.19</scalatest.version>
+
+        <!-- The generic engine: runs whatever YAML is passed with -Dplan=...
+             (the self-contained mock demo is org.codelabuk.perf.it.MockedYamlSimulation) -->
+        <gatling.simulationClass>org.codelabuk.perf.sim.YamlSimulation</gatling.simulationClass>
+        <perf.heap>2g</perf.heap>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.scala-lang</groupId>
+            <artifactId>scala-library</artifactId>
+            <version>${scala.version}</version>
+        </dependency>
+        <!-- core is a library: Gatling is a compile dependency, not test-only -->
+        <dependency>
+            <groupId>io.gatling.highcharts</groupId>
+            <artifactId>gatling-charts-highcharts</artifactId>
+            <version>${gatling.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-yaml</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.scalatest</groupId>
+            <artifactId>scalatest_${scala.binary.version}</artifactId>
+            <version>${scalatest.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <sourceDirectory>src/main/scala</sourceDirectory>
+        <testSourceDirectory>src/test/scala</testSourceDirectory>
+        <plugins>
+            <plugin>
+                <groupId>net.alchim31.maven</groupId>
+                <artifactId>scala-maven-plugin</artifactId>
+                <version>${scala-maven-plugin.version}</version>
+                <configuration>
+                    <scalaVersion>${scala.version}</scalaVersion>
+                    <jvmArgs>
+                        <jvmArg>-Xss100M</jvmArg>
+                    </jvmArgs>
+                    <args>
+                        <arg>-deprecation</arg>
+                        <arg>-feature</arg>
+                        <arg>-unchecked</arg>
+                        <arg>-language:implicitConversions</arg>
+                        <arg>-language:postfixOps</arg>
+                    </args>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>compile</goal>
+                            <goal>testCompile</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- run ScalaTest suites instead of surefire -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.2</version>
+                <configuration>
+                    <skipTests>true</skipTests>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.scalatest</groupId>
+                <artifactId>scalatest-maven-plugin</artifactId>
+                <version>2.2.0</version>
+                <configuration>
+                    <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>
+                    <junitxml>.</junitxml>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>test</id>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- runs the command-line tools (Validate, Merge) until gatling-runner exists, see README -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <configuration>
+                    <executable>java</executable>
+                    <classpathScope>test</classpathScope>
+                    <!-- relative paths resolve from where mvn was run, same as -Dplan for gatling:test -->
+                    <workingDirectory>${session.executionRootDirectory}</workingDirectory>
+                </configuration>
+                <executions>
+                    <!-- mvn -pl gatling-api-core test-compile exec:exec@validate -Dperf.args="plan.yaml" -->
+                    <execution>
+                        <id>validate</id>
+                        <goals><goal>exec</goal></goals>
+                        <configuration>
+                            <commandlineArgs>-classpath %classpath org.codelabuk.perf.cli.Validate ${perf.args}</commandlineArgs>
+                        </configuration>
+                    </execution>
+                    <!-- mvn -pl gatling-api-core test-compile exec:exec@merge -Dperf.args="(input/output options)" -->
+                    <execution>
+                        <id>merge</id>
+                        <goals><goal>exec</goal></goals>
+                        <configuration>
+                            <!-- Gatling's report generation reads JDK string internals -->
+                            <commandlineArgs>--add-opens=java.base/java.lang=ALL-UNNAMED -classpath %classpath org.codelabuk.perf.cli.Merge ${perf.args}</commandlineArgs>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>io.gatling</groupId>
+                <artifactId>gatling-maven-plugin</artifactId>
+                <version>${gatling-maven-plugin.version}</version>
+                <configuration>
+                    <simulationClass>${gatling.simulationClass}</simulationClass>
+                    <jvmArgs>
+                        <!-- load generator heap; raise for big tests: -Dperf.heap=4g (keep ~half of the machine's RAM) -->
+                        <jvmArg>-Xmx${perf.heap}</jvmArg>
+                    </jvmArgs>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

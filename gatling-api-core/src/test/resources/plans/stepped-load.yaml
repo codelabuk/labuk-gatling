@@ -1,0 +1,26 @@
+# JMeter-style load expressed per minute, with stepped increments - against the mock API.
+# Real-life equivalent: 266 requests/min for an hour (~16k requests), reached in steps.
+name: stepped-load
+baseUrl: ${BASE_URL:http://localhost:18080}
+include: [ apis/sr.yaml ]
+
+auth:
+  type: jwt
+  secret: ${JWT_SECRET:test-secret}
+  claims: { sub: load-tester }
+  validity: 10m
+
+scenarios:
+  - name: filter-data-stepped
+    steps:
+      - api: loadFilterData
+    load:
+      profile:
+        # 3 levels: 120/min, 240/min, 360/min - 4s each, 1s ramps between levels
+        - incrementUsersPerSec: { by: 120/min, times: 3, eachLevelLasting: 4s, separatedByRampsLasting: 1s, startingFrom: 120/min }
+        # then hold 266/min (the JMeter figure)
+        - constantUsersPerSec: { rate: 266/min, during: 5s }
+
+sla:
+  - global.failedRequests.percent < 1
+  - global.responseTime.p95 < 500ms
