@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- perf logging. The distribution reads conf/logback.xml - edit that copy. -->
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level %logger{0} - %msg%n</pattern>
+        </encoder>
+        <immediateFlush>false</immediateFlush>
+    </appender>
+
+    <!-- framework messages and the YAML `log:` step -->
+    <logger name="org.codelabuk.perf" level="INFO"/>
+    <!-- TRACE: print failed requests and responses, DEBUG: print all of them (slow - for debugging only) -->
+    <logger name="io.gatling.http.engine.response" level="WARN"/>
+
+    <root level="WARN">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

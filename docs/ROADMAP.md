@@ -123,7 +123,9 @@ Work items:
 4. Worker mode: plan location, worker index/count, start time, results target from env; `--no-reports`;
    upload `simulation.log`; treat exit code 2 (SLA) as informational on a pod.
 5. Report mode: download logs → merge → report → SLA verdict → upload; exit 0/2.
-6. Live metrics switch: Graphite data writer enabled by env.
+6. ~~Live metrics switch: Graphite data writer enabled by env.~~ **Dropped: Gatling 3.13's open-source edition
+   has no Graphite writer** (only console + file; verified in its source and with a listener). Live metrics
+   moved to the platform section as a design item.
 7. Tuning defaults for large user counts: heap, file descriptors, ephemeral ports.
 8. CI examples (Jenkins, GitLab): validate on merge request, run on schedule, fail on SLA.
 
@@ -177,7 +179,7 @@ twice, and one merged report with the right SLA verdict.
 | Part | Choice |
 |---|---|
 | Result storage | MinIO (S3-compatible) or the cloud's bucket, with expiry rules |
-| Live metrics | Gatling Graphite writer → Telegraf / graphite-exporter → InfluxDB / Prometheus → Grafana dashboard |
+| Live metrics | **Needs design** — Gatling 3.13 OSS cannot stream metrics (no Graphite writer). Options: (a) our own exporter: a recording check on every request + the SQL action feed a Prometheus endpoint per worker → Grafana; (b) watch the console summary each worker prints every 5 s (pod logs); (c) rely on server-side APM/Prometheus during tests and Gatling's report after. |
 | Server metrics | Existing Prometheus/APM alongside the Gatling dashboard |
 | Load generators | Dedicated (spot) node pool that scales to zero between tests |
 

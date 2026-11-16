@@ -32,6 +32,7 @@
              (the self-contained mock demo is org.codelabuk.perf.it.MockedYamlSimulation) -->
         <gatling.simulationClass>org.codelabuk.perf.sim.YamlSimulation</gatling.simulationClass>
         <perf.heap>2g</perf.heap>
+        <perf.args></perf.args>
     </properties>
 
     <dependencies>
@@ -145,6 +146,14 @@
                         <goals><goal>exec</goal></goals>
                         <configuration>
                             <commandlineArgs>-classpath %classpath org.codelabuk.perf.cli.Validate ${perf.args}</commandlineArgs>
+                        </configuration>
+                    </execution>
+                    <!-- mvn -pl gatling-api-core test-compile exec:exec@mock   (runs the mock API until stopped) -->
+                    <execution>
+                        <id>mock</id>
+                        <goals><goal>exec</goal></goals>
+                        <configuration>
+                            <commandlineArgs>-classpath %classpath org.codelabuk.perf.it.MockApiMain ${perf.args}</commandlineArgs>
                         </configuration>
                     </execution>
                     <!-- mvn -pl gatling-api-core test-compile exec:exec@merge -Dperf.args="(input/output options)" -->

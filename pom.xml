@@ -11,6 +11,7 @@
     <modules>
         <module>gatling-api-core</module>
         <module>gatling-sql</module>
+        <module>gatling-runner</module>
     </modules>
 
     <properties>

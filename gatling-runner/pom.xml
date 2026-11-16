@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.codelabuk</groupId>
+        <artifactId>labuk-gatling</artifactId>
+        <version>1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>gatling-runner</artifactId>
+    <name>gatling-runner</name>
+    <description>The `perf` command and Docker image: run YAML plans without Maven, locally or as a Kubernetes worker.</description>
+
+    <properties>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <scala.version>2.13.15</scala.version>
+        <scala.binary.version>2.13</scala.binary.version>
+        <!-- docker image name; override with -Dimage=registry.example.com/perf/labuk-perf-runner -->
+        <image>labuk-perf-runner</image>
+    </properties>
+
+    <dependencies>
+        <!-- core + SQL support + Oracle/PostgreSQL drivers -->
+        <dependency>
+            <groupId>org.codelabuk</groupId>
+            <artifactId>gatling-sql</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.scalatest</groupId>
+            <artifactId>scalatest_${scala.binary.version}</artifactId>
+            <version>3.2.19</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <sourceDirectory>src/main/scala</sourceDirectory>
+        <testSourceDirectory>src/test/scala</testSourceDirectory>
+        <plugins>
+            <plugin>
+                <groupId>net.alchim31.maven</groupId>
+                <artifactId>scala-maven-plugin</artifactId>
+                <version>4.9.2</version>
+                <configuration>
+                    <scalaVersion>${scala.version}</scalaVersion>
+                    <args>
+                        <arg>-deprecation</arg>
+                        <arg>-feature</arg>
+                        <arg>-unchecked</arg>
+                    </args>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>compile</goal>
+                            <goal>testCompile</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.2</version>
+                <configuration>
+                    <skipTests>true</skipTests>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.scalatest</groupId>
+                <artifactId>scalatest-maven-plugin</artifactId>
+                <version>2.2.0</version>
+                <configuration>
+                    <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>
+                    <junitxml>.</junitxml>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>test</id>
+                        <goals><goal>test</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- the distribution: target/perf-<version>/ and target/perf-<version>.zip -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.7.1</version>
+                <configuration>
+                    <finalName>perf-${project.version}</finalName>
+                    <appendAssemblyId>false</appendAssemblyId>
+                    <descriptors>
+                        <descriptor>src/assembly/dist.xml</descriptor>
+                    </descriptors>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>dist</id>
+                        <phase>package</phase>
+                        <goals><goal>single</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- the Docker image, built without a Docker daemon:
+                   mvn -pl gatling-runner -am package jib:dockerBuild     (into the local Docker)
+                   mvn -pl gatling-runner -am package jib:build -Dimage=<registry>/labuk-perf-runner   (push) -->
+            <plugin>
+                <groupId>com.google.cloud.tools</groupId>
+                <artifactId>jib-maven-plugin</artifactId>
+                <version>3.4.4</version>
+                <configuration>
+                    <from>
+                        <image>eclipse-temurin:17-jre</image>
+                    </from>
+                    <to>
+                        <image>${image}:${project.version}</image>
+                    </to>
+                    <container>
+                        <mainClass>org.codelabuk.perf.runner.Perf</mainClass>
+                        <jvmFlags>
+                            <!-- Gatling's reports read JDK string internals -->
+                            <jvmFlag>--add-opens=java.base/java.lang=ALL-UNNAMED</jvmFlag>
+                            <!-- size the heap from the pod's memory limit instead of a fixed -Xmx -->
+                            <jvmFlag>-XX:MaxRAMPercentage=75</jvmFlag>
+                        </jvmFlags>
+                        <!-- extra JDBC drivers can be mounted here -->
+                        <extraClasspath>
+                            <path>/opt/perf/drivers/*</path>
+                        </extraClasspath>
+                        <environment>
+                            <RESULTS_DIR>/tmp/results</RESULTS_DIR>
+                        </environment>
+                        <workingDirectory>/tmp</workingDirectory>
+                        <user>1000</user>
+                        <labels>
+                            <org.opencontainers.image.title>labuk-perf-runner</org.opencontainers.image.title>
+                            <org.opencontainers.image.version>${project.version}</org.opencontainers.image.version>
+                        </labels>
+                    </container>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

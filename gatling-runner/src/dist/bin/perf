@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# perf - run YAML performance test plans (no Maven needed).   perf help
+#   PERF_HEAP        load generator heap (default 2g)
+#   PERF_JAVA_OPTS   extra JVM options
+#   JAVA_HOME        Java 17+ (otherwise `java` from PATH)
+PERF_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+JAVA="java"
+[ -n "${JAVA_HOME:-}" ] && JAVA="$JAVA_HOME/bin/java"
+if ! command -v "$JAVA" >/dev/null 2>&1; then
+  echo "perf: Java 17 or newer is required - set JAVA_HOME or put java on the PATH" >&2
+  exit 1
+fi
+
+SEP=":"
+HOME_FOR_JAVA="$PERF_HOME"
+if command -v cygpath >/dev/null 2>&1; then   # Git Bash / Cygwin on Windows: Java needs Windows paths
+  SEP=";"
+  HOME_FOR_JAVA="$(cygpath -m "$PERF_HOME")"
+fi
+
+# shellcheck disable=SC2086
+exec "$JAVA" -Xmx"${PERF_HEAP:-2g}" --add-opens=java.base/java.lang=ALL-UNNAMED ${PERF_JAVA_OPTS:-} \
+  "-Dlogback.configurationFile=$HOME_FOR_JAVA/conf/logback.xml" \
+  -cp "$HOME_FOR_JAVA/lib/*${SEP}$HOME_FOR_JAVA/drivers/*" \
+  org.codelabuk.perf.runner.Perf "$@"
