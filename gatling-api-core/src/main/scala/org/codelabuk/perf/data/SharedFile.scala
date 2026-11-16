@@ -35,7 +35,7 @@ object SharedFile {
   }
 
   /** Deterministic order, so every worker slices identically even if the API returned items in a different order. */
-  def sorted(items: Seq[Any]): Seq[Any] = items.sortBy(i => json.writeValueAsString(toJava(i)))
+  def sorted[T](items: Seq[T]): Seq[T] = items.sortBy(i => json.writeValueAsString(toJava(i)))
 
   private def toJava(v: Any): Any = v match {
     case m: scala.collection.Map[_, _] =>

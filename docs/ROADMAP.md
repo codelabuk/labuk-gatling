@@ -11,7 +11,7 @@ gatling-api-core ──► gatling-sql ──┐
 | # | Module | Status | Size |
 |---|---|---|---|
 | 1 | `gatling-api-core` v1.1 — hardening | H1–H5 done; extra step e2e tests open | S–M |
-| 2 | `gatling-sql` | planned | M |
+| 2 | `gatling-sql` | v1 done (verified on Derby; Oracle not yet tried on a real DB) | M |
 | 3 | `gatling-runner` | planned | M |
 | 4 | `loadtest-operator` | planned | L |
 | 5 | Platform — live metrics, result storage | planned | S–M |
@@ -89,8 +89,18 @@ Work items:
 7. Drivers: Oracle `ojdbc11`, PostgreSQL, SQL Server, MySQL bundled in the runner; others via `drivers/`.
 8. Pool budget warning: `pool size × workers` vs. an allowed maximum of DB sessions.
 
-Tests: H2 in-memory; optional Oracle Free container test.
-**Done when** mixed API+SQL and pure SQL plans run under load against H2 and Oracle with SQL timings and SLAs in the report.
+Tests: Derby in-memory (chosen over H2 because it supports procedures with OUT parameters); optional
+Oracle Free container test.
+**Done when** mixed API+SQL and pure SQL plans run under load against Derby and Oracle with SQL timings and SLAs in the report.
+
+**Status (v1):** items 1–6 and 8 done — pools, `query` / `update` / `call` (OUT params incl. `cursor`,
+procedure result rows), `rollback`, own thread pool, report entries + optional connection-wait entry,
+checks, extraction, JDBC feeder, `allowWrites` guard, `maxSessions` warning, fail-fast on unreachable DB.
+Verified: 6 unit tests + an end-to-end run (660 requests, 0 errors) mixing DB-only load and an API → DB flow.
+**Open:** `batch` statements; a run against a real **Oracle** (REF CURSOR / PL/SQL OUT behaviour, driver
+properties) — needs a database; SQL Server / MySQL drivers (add when needed, no code change).
+Core changes it needed: plugin hooks `isFeeder` and `reportNames`; SLF4J pinned to 2.x in the parent pom
+(HikariCP's 1.7.x silently disabled all logging).
 
 ---
 

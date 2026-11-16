@@ -9,7 +9,7 @@ variables and conditions all live in the YAML; the engine has no business logic 
 | Module | Status | What it is |
 |---|---|---|
 | `gatling-api-core` | ✅ v1.1 | The engine: YAML loader + validation, HTTP, auth, data, flow control, load profiles, SLAs, distributed-run support (worker split, synchronised start, setup once, log merge) |
-| `gatling-sql` | planned | `sql:` steps and `jdbc` data sources (Oracle first, any JDBC database) |
+| `gatling-sql` | ✅ v1 | `sql:` steps and `jdbc` data sources — any JDBC database (Oracle and PostgreSQL drivers included) |
 | `gatling-runner` | planned | `perf run / validate` launcher + Docker image — no Maven needed for testers |
 | `loadtest-operator` | planned | Kubernetes operator (Java, fabric8) for distributed runs |
 
@@ -392,6 +392,91 @@ ops `< <= > >= ==`. Results print at the end of the run, and a failed SLA fails 
 
 ---
 
+## SQL load testing (`gatling-sql`)
+
+Plans that use `sql:` steps run from the **`gatling-sql`** module (it contains the core, the SQL support and
+the Oracle + PostgreSQL drivers); everything else in this README works there too:
+
+```bash
+mvn -pl gatling-sql test-compile gatling:test -DskipTests -Dplan=plans/orders-db.yaml -DDB_PASSWORD=...
+# demo: database load + API-then-database flow, against in-memory Derby and the mock API
+mvn -pl gatling-sql test-compile gatling:test -Dgatling.simulationClass=org.codelabuk.perf.sql.MockedSqlSimulation
+```
+
+### Connections and DB test data
+
+```yaml
+dataSources:
+  ordersDb:
+    type: jdbc
+    url: ${DB_URL}                     # jdbc:oracle:thin:@//host:1521/SERVICE, jdbc:postgresql://host/db, ...
+    user: ${DB_USER}
+    password: ${DB_PASSWORD}
+    pool: { size: 20, connectionTimeout: 10s }   # all connections are opened before the load starts
+    allowWrites: false                 # default: only SELECTs; set true for update/call steps
+    maxSessions: 200                   # optional: warns if pool size x workers would exceed it
+    fetchSize: 500                     # optional
+    properties: { oracle.jdbc.ReadTimeout: "60000" }   # optional driver properties
+    # driver: oracle.jdbc.OracleDriver  # optional - normally detected from the URL
+
+  activeCustomers:                     # rows of a query as test data (one row per virtual user)
+    type: jdbc
+    datasource: ordersDb
+    query: "SELECT customer_id, account_no FROM customers WHERE status = ? ORDER BY customer_id"
+    params: [ ACTIVE ]
+    strategy: queue                    # same strategies as CSV; split across workers by default
+```
+
+An unreachable database stops the run at start-up with `Cannot connect to jdbc connection '...'`.
+Column names are lower-case in variables (`#{customer_id}`), whatever the database returns.
+
+### The `sql` step
+
+```yaml
+- sql:
+    datasource: ordersDb
+    name: find-orders                  # label in the report (default "sql <datasource>") - usable in SLAs
+    query: "SELECT id, status FROM orders WHERE customer_id = ?"      # or update: / call:
+    params: [ "#{customer_id}" ]
+    checks:
+      - rowCount: ">= 1"
+      - column: status
+        equals: OPEN
+    extract:
+      orderId: id                      # first row, column id
+      allIds: { column: id, all: true }
+      orderRows: { rows: true }        # all rows as a list (use with forEach / setup share)
+      found: { count: true }           # number of rows (or rows updated)
+    timeout: 5s                        # optional query timeout
+    maxRows: 1000                      # default 1000
+```
+
+| Statement | Use | Notes |
+|---|---|---|
+| `query:` | `SELECT` / `WITH` | Read-only; checks `rowCount`, `column` + `equals` |
+| `update:` | `INSERT` / `UPDATE` / `DELETE` / DDL | Needs `allowWrites: true`; check `updateCount` |
+| `call:` | Stored procedures `{call pkg.proc(?, ?)}` | Needs `allowWrites: true`; OUT params, result rows |
+
+**Parameters**, one per `?`: a literal (`42`, `ACTIVE`), a variable (`"#{orderId}"`), a typed value
+`{ value: "19.99", type: decimal }` (types: `string int long decimal double boolean date timestamp null`), or
+for procedures an OUT parameter `{ out: int, saveAs: newId }` (out types add `number` and `cursor` for
+Oracle REF CURSOR, saved as a list of rows).
+
+**`rollback: true`** runs a write and rolls it back: the timing is real, nothing is kept — useful against
+shared test data.
+
+**`reportConnectionWait: true`** adds a `<name> (connection)` entry timing how long the step waited for a
+free connection. If that is high, the pool is too small; if the statement itself is slow, it is the database.
+
+How it runs: JDBC calls block, so each connection pool has its own threads (pool size = threads); Gatling's
+own threads are never blocked. The measured time includes waiting for a free connection, as a real
+application would experience it.
+
+Other databases: add the driver as a dependency in `gatling-sql/pom.xml` (SQL Server, MySQL, DB2, ...) —
+no code change.
+
+---
+
 ## Distributed runs
 
 One machine runs thousands of virtual users, but bigger tests run the same plan on several workers
@@ -466,3 +551,5 @@ Engine code: `gatling-api-core/src/main/scala/org/codelabuk/perf/`
 | `plugin` | Extension points: `StepPlugin`, `DataSourcePlugin` (via `META-INF/services`) |
 
 A new step kind or protocol is a plugin module on the classpath; existing plans keep working.
+`gatling-sql` is the reference example: `SqlStepPlugin` (the `sql:` step) and `JdbcDataSourcePlugin`
+(`type: jdbc`), registered in `src/main/resources/META-INF/services/`.

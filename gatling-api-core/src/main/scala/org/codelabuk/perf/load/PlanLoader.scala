@@ -7,7 +7,7 @@ import scala.concurrent.duration._
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper
-import org.codelabuk.perf.data.RecordSource
+import org.codelabuk.perf.data.{PlanData, RecordSource}
 import org.codelabuk.perf.expr.{Condition, Durations}
 import org.codelabuk.perf.model._
 import org.codelabuk.perf.plugin.Plugins
@@ -458,7 +458,7 @@ object PlanLoader {
 
     val shareNames = plan.setup.toList.flatMap(_.share.map(_.name))
     shareNames.filter(plan.dataSources.contains).foreach(n => fail(s"'$n' is both a data source and a setup share - rename one"))
-    val feedable = plan.dataSources.keySet ++ shareNames
+    val feedable = PlanData.feederNames(plan) ++ shareNames
 
     def walk(steps: List[Step], where: String): Unit = steps.foreach {
       case Step.Api(api, _, _, _) => if (!plan.apis.contains(api)) fail(s"$where: step uses API '$api' which is not defined - known APIs: ${plan.apis.keys.toList.sorted.mkString(", ")}")
@@ -496,6 +496,7 @@ object PlanLoader {
     // SLA targets must exist
     def names(steps: List[Step]): (Set[String], Set[String]) = steps.foldLeft((Set.empty[String], Set.empty[String])) {
       case ((a, t), Step.Api(api, name, _, _)) => (a + name.getOrElse(api), t)
+      case ((a, t), Step.Plugin(kind, node))   => (a ++ Plugins.steps(kind).reportNames(node), t)
       case ((a, t), Step.Transaction(n, s))    => val (a2, t2) = names(s); (a ++ a2, t ++ t2 + n)
       case ((a, t), Step.PollUntil(Some(n), _, _, _, c, _)) => val (a2, t2) = names(c); (a ++ a2 + n, t ++ t2) // named polls are report entries
       case ((a, t), s) =>

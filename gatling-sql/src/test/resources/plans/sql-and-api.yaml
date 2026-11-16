@@ -1,0 +1,94 @@
+# Database load on its own, and an API flow followed by database checks - against the mock API + in-memory Derby.
+name: sql-and-api
+baseUrl: ${BASE_URL:http://localhost:18080}
+
+apis:
+  loadFilterData:
+    request: POST /sr/load-filter-data
+    body: { json: { region: ALL } }
+    checks: [ { status: 200 } ]
+
+dataSources:
+  db:
+    type: jdbc
+    url: ${DB_URL:jdbc:derby:memory:perf}
+    pool: { size: 8, connectionTimeout: 5s }
+    allowWrites: true            # this plan inserts and calls procedures
+    maxSessions: 100
+  activeCustomers:               # test data straight from the database
+    type: jdbc
+    datasource: db
+    query: "SELECT id AS customer_id, name FROM customers WHERE status = ? ORDER BY id"
+    params: [ ACTIVE ]
+    strategy: circular
+
+auth: { type: jwt, secret: "${JWT_SECRET:test-secret}", claims: { sub: load-tester }, validity: 10m }
+
+scenarios:
+  - name: db-only
+    auth: none
+    feeders: [ activeCustomers ]
+    steps:
+      - transaction: order-lifecycle
+        steps:
+          - sql:
+              datasource: db
+              name: find-customer
+              query: "SELECT id, status FROM customers WHERE id = ?"
+              params: [ "#{customer_id}" ]
+              checks: [ { rowCount: 1 }, { column: status, equals: ACTIVE } ]
+          - sql:
+              datasource: db
+              name: place-order                       # stored procedure with an OUT parameter
+              call: "{call PLACE_ORDER(?, ?, ?)}"
+              params: [ "#{customer_id}", { value: "19.99", type: decimal }, { out: int, saveAs: orderId } ]
+          - sql:
+              datasource: db
+              name: order-history                     # procedure returning rows
+              call: "{call CUSTOMER_ORDERS(?)}"
+              params: [ "#{customer_id}" ]
+              checks: [ { rowCount: ">= 1" } ]
+              extract: { orderIds: { column: id, all: true } }
+          - sql:
+              datasource: db
+              name: cancel-dry-run                    # measured, then rolled back
+              update: "UPDATE orders SET status = 'CANCELLED' WHERE id = ?"
+              params: [ "#{orderId}" ]
+              rollback: true
+              checks: [ { updateCount: 1 } ]
+          - sql:
+              datasource: db
+              name: verify-still-open
+              query: "SELECT status FROM orders WHERE id = ?"
+              params: [ "#{orderId}" ]
+              checks: [ { column: status, equals: OPEN } ]
+              reportConnectionWait: true
+    load:
+      profile:
+        - constantUsersPerSec: { rate: 20, during: 5s }
+
+  - name: api-then-db
+    steps:
+      - api: loadFilterData
+        extract: { sr: "$.items[0].srId" }
+      - sql:
+          datasource: db
+          name: write-audit
+          update: "INSERT INTO audit (sr, note) VALUES (?, ?)"
+          params: [ "#{sr}", "seen by user #{randomInt(1,1000)}" ]
+          checks: [ { updateCount: 1 } ]
+      - sql:
+          datasource: db
+          name: read-audit
+          query: "SELECT COUNT(*) AS n FROM audit WHERE sr = ?"
+          params: [ "#{sr}" ]
+          extract: { auditCount: n }
+      - log: "#{sr} has #{auditCount} audit row(s)"
+    load:
+      profile:
+        - rampUsers: { users: 20, during: 5s }
+
+sla:
+  - global.failedRequests.percent < 1
+  - api.place-order.responseTime.p95 < 500ms
+  - transaction.order-lifecycle.failed.percent < 1

@@ -90,6 +90,17 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- share the mock API and test plans with other modules' tests (gatling-sql) -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.2</version>
+                <executions>
+                    <execution>
+                        <goals><goal>test-jar</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- run ScalaTest suites instead of surefire -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

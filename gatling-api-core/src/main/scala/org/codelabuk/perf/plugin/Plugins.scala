@@ -22,6 +22,8 @@ trait StepPlugin {
   def extraKeys: Set[String] = Set.empty
   /** Fail fast with node.fail(...) on bad YAML. Called while loading the plan. */
   def validate(node: Node, plan: TestPlan): Unit = ()
+  /** Names this step shows up under in the report - lets SLAs such as `api.<name>...` target it. */
+  def reportNames(node: Node): Set[String] = Set.empty
   def build(node: Node, ctx: BuildContext): ChainBuilder
 }
 
@@ -30,8 +32,10 @@ trait DataSourcePlugin {
   /** The value of `type:` that selects this plugin, e.g. "jdbc". */
   def kind: String
   def validate(node: Node, plan: TestPlan): Unit = ()
-  /** Records to hand out to virtual users when this data source is used as a feeder, if supported. */
-  def feederRecords(node: Node, plan: TestPlan): Option[IndexedSeq[Map[String, Any]]] = None
+  /** Whether this definition supplies records to virtual users (`feeders:` / `feed:`), or is only used by steps. */
+  def isFeeder(node: Node): Boolean = false
+  /** Records to hand out to virtual users; called once per worker at start-up, only when [[isFeeder]]. */
+  def feederRecords(node: Node, plan: TestPlan): IndexedSeq[Map[String, Any]] = IndexedSeq.empty
 }
 
 object Plugins {

@@ -11,19 +11,28 @@ object PlanData {
 
   /** Every data source of the plan, already sliced for `worker` where splitAcrossWorkers is on. */
   def sources(plan: TestPlan, worker: Worker): Map[String, RecordSource] =
-    plan.dataSources.map {
+    plan.dataSources.toList.flatMap {
       case (name, DataSourceDef.Csv(_, file, strategy, split, sep)) =>
         val all =
           try CsvReader.read(file, sep)
           catch { case e: IllegalArgumentException => throw new PlanException(s"data source '$name': ${e.getMessage}") }
-        name -> new RecordSource(name, if (split) worker.slice(all) else all, strategy)
-      case (name, DataSourceDef.Plugin(_, kind, node)) =>
+        Some(name -> new RecordSource(name, if (split) worker.slice(all) else all, strategy))
+      case (name, DataSourceDef.Plugin(_, kind, node)) if Plugins.dataSources(kind).isFeeder(node) =>
         val records = Plugins.dataSources(kind).feederRecords(node, plan)
-          .getOrElse(node.fail(s"data source type '$kind' cannot be used as a feeder"))
         val strategy = node.optStr("strategy").getOrElse("circular")
         val split = node.optBool("splitAcrossWorkers").getOrElse(true)
-        name -> new RecordSource(name, if (split) worker.slice(records) else records, strategy)
-    }
+        // e.g. a DB query without ORDER BY: sort so every worker splits the same list
+        val mine = if (!split) records else worker.slice(if (worker.count > 1) SharedFile.sorted(records).toIndexedSeq else records)
+        Some(name -> new RecordSource(name, mine, strategy))
+      case _ => None // a plugin definition used only by steps (e.g. a database connection)
+    }.toMap
+
+  /** Names usable in `feeders:` / `feed:` - CSV files and feeder-capable plugin data sources. */
+  def feederNames(plan: TestPlan): Set[String] =
+    plan.dataSources.collect {
+      case (n, _: DataSourceDef.Csv)                                                   => n
+      case (n, DataSourceDef.Plugin(_, kind, node)) if Plugins.dataSources(kind).isFeeder(node) => n
+    }.toSet
 
   /** Normalises whatever an extraction produced into a list of items. */
   def asItems(value: Any): Seq[Any] = value match {
