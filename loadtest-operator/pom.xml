@@ -78,6 +78,28 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- keeps the Helm chart's CRD identical to the generated one (runs right after the generator) -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>crd-to-helm-chart</id>
+                        <phase>process-classes</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.basedir}/../charts/loadtest-operator/crds</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.build.outputDirectory}/META-INF/fabric8</directory>
+                                    <includes><include>loadtests.perf.codelabuk.org-v1.yml</include></includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- operator image:  mvn -pl loadtest-operator -am package jib:dockerBuild -->
             <plugin>
                 <groupId>com.google.cloud.tools</groupId>

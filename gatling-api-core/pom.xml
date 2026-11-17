@@ -182,4 +182,40 @@
         </plugins>
     </build>
 
+    <profiles>
+        <!-- test-only image of the mock API, as a system under test inside a cluster:
+             mvn -pl gatling-api-core -Pmock-image test-compile jib:dockerBuild -->
+        <profile>
+            <id>mock-image</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.google.cloud.tools</groupId>
+                        <artifactId>jib-maven-plugin</artifactId>
+                        <version>3.4.4</version>
+                        <configuration>
+                            <from><image>eclipse-temurin:17-jre</image></from>
+                            <to><image>labuk-mock-api:${project.version}</image></to>
+                            <extraDirectories>
+                                <paths>
+                                    <path>
+                                        <from>target/test-classes</from>
+                                        <into>/app/test-classes</into>
+                                    </path>
+                                </paths>
+                            </extraDirectories>
+                            <container>
+                                <mainClass>org.codelabuk.perf.it.MockApiMain</mainClass>
+                                <args><arg>18080</arg><arg>0.0.0.0</arg></args>
+                                <extraClasspath><path>/app/test-classes</path></extraClasspath>
+                                <ports><port>18080</port></ports>
+                                <user>1000</user>
+                            </container>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
 </project>

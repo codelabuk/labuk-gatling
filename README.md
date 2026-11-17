@@ -554,14 +554,25 @@ Good to know:
 
 ## On Kubernetes (`loadtest-operator`)
 
-The operator automates the distributed steps above. Install once:
+The operator automates the distributed steps above. Install once, with **Helm** (recommended):
 
 ```bash
-mvn install                                                    # builds everything, generates the CRD
-kubectl apply -f loadtest-operator/target/classes/META-INF/fabric8/loadtests.perf.codelabuk.org-v1.yml
-mvn -pl gatling-runner,loadtest-operator -am package jib:build -Dimage=...   # push both images (see each pom)
-kubectl apply -f loadtest-operator/deploy/operator.yaml        # namespace perf-system, RBAC, operator
+mvn install                                                     # builds everything; refreshes the chart's CRD
+mvn -pl gatling-runner jib:build -Dimage=registry.example.com/perf/labuk-perf-runner          # push the runner
+mvn -pl loadtest-operator jib:build -Dimage=registry.example.com/perf/labuk-loadtest-operator # push the operator
+helm upgrade --install loadtest-operator charts/loadtest-operator -n perf-system --create-namespace \
+  --set image.repository=registry.example.com/perf/labuk-loadtest-operator --set image.tag=1.0-SNAPSHOT
 ```
+
+Chart values (`charts/loadtest-operator/values.yaml`): `image.*`, `imagePullSecrets`, `resources`, `logLevel`,
+`nodeSelector` / `tolerations` / `affinity`, `serviceAccount.*`, `rbac.create`, pod/container security
+contexts (non-root, read-only root filesystem by default). Helm installs the CRD on first install but never
+upgrades it — after an upgrade that changes the CRD run `kubectl apply -f charts/loadtest-operator/crds/`.
+Plain manifests (no Helm) are in `loadtest-operator/deploy/operator.yaml`.
+
+**End-to-end test on minikube:** `bash scripts/minikube-e2e.sh` builds the three images (runner, operator,
+mock API), installs the operator with Helm, runs a 2-worker LoadTest against the in-cluster mock and copies
+the merged report to `loadtest-operator/target/e2e/`. It only uses `--context minikube`.
 
 Then each test run is one resource (full example: `loadtest-operator/deploy/example-loadtest.yaml`):
 

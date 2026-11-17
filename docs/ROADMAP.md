@@ -188,7 +188,9 @@ idempotency, pod details, manifests parse) + the runner's env-driven worker path
 - **Never run on a real cluster yet** — needs the two images built and a cluster (minikube is installed here).
 - Start time is set when the workers Job is created (now + `startDelaySeconds`), not when all pods are ready —
   a pod that pulls its image slower than the delay starts late (it logs a warning).
-- `perf submit` / `perf status` CLI, Helm chart, printer columns for `kubectl get`, leader election (single replica now).
+- ✅ Helm chart `charts/loadtest-operator` (CRD in `crds/`, kept identical to the generated one by the build;
+  RBAC, Deployment with non-root + read-only root filesystem; values for image, resources, scheduling, log level).
+- `perf submit` / `perf status` CLI, printer columns for `kubectl get`, leader election (single replica now).
 - Results only on a PVC (no S3/MinIO upload yet); multi-node clusters need a ReadWriteMany storage class.
 
 ---

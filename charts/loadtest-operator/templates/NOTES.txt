@@ -1,0 +1,15 @@
+loadtest-operator is running in namespace {{ .Release.Namespace }} and watches LoadTest resources in all namespaces.
+
+Start a test run (one LoadTest per run - use a new name each time):
+  kubectl apply -f loadtest-operator/deploy/example-loadtest.yaml
+  kubectl get loadtests -A -w
+
+Result and report location:
+  kubectl get loadtest <name> -n <ns> -o jsonpath='{.status.result} {.status.reportPath} {.status.message}'
+
+Operator log:
+  kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "loadtest-operator.fullname" . }}
+
+Note: Helm installs the LoadTest CRD on first install but never upgrades or deletes it.
+After an operator upgrade that changes the CRD, apply it yourself:
+  kubectl apply -f charts/loadtest-operator/crds/

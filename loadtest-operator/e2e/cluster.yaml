@@ -1,0 +1,49 @@
+# Everything the end-to-end test needs besides the operator: a namespace, the mock API as the system under
+# test, and a results volume. Used by scripts/minikube-e2e.sh.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: perf-e2e
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-api
+  namespace: perf-e2e
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mock-api }
+  template:
+    metadata:
+      labels: { app: mock-api }
+    spec:
+      containers:
+        - name: mock-api
+          image: labuk-mock-api:1.0-SNAPSHOT
+          ports: [ { containerPort: 18080 } ]
+          readinessProbe:
+            tcpSocket: { port: 18080 }
+            periodSeconds: 2
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits: { memory: 768Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-api
+  namespace: perf-e2e
+spec:
+  selector: { app: mock-api }
+  ports: [ { port: 18080, targetPort: 18080 } ]
+---
+# single-node minikube: ReadWriteOnce is enough (all pods run on the one node)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: perf-results
+  namespace: perf-e2e
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources: { requests: { storage: 1Gi } }

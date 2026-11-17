@@ -1,0 +1,49 @@
+# loadtest-operator Helm values.
+#   helm install loadtest-operator charts/loadtest-operator -n perf-system --create-namespace \
+#     --set image.repository=registry.example.com/labuk-loadtest-operator --set image.tag=1.0.0
+
+image:
+  repository: labuk-loadtest-operator
+  # defaults to the chart's appVersion
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  # defaults to the release's full name
+  name: ""
+  annotations: {}
+
+rbac:
+  # ClusterRole + ClusterRoleBinding so the operator can run LoadTests in any namespace
+  create: true
+
+# The operator keeps no state outside LoadTest.status; one replica is all it needs.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+
+# Log level of the operator itself: INFO, DEBUG, ...
+logLevel: INFO
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]

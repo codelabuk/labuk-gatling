@@ -5,7 +5,7 @@
             <pattern>%d{HH:mm:ss.SSS} %-5level %logger{0} - %msg%n</pattern>
         </encoder>
     </appender>
-    <logger name="org.codelabuk.perf" level="INFO"/>
+    <logger name="org.codelabuk.perf" level="${LOG_LEVEL:-INFO}"/>
     <logger name="io.javaoperatorsdk" level="INFO"/>
     <root level="WARN">
         <appender-ref ref="CONSOLE"/>

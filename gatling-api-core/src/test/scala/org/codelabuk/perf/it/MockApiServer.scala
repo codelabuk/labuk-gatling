@@ -30,13 +30,13 @@ object MockApiServer {
   val rejected = new AtomicInteger
   @volatile private var server: HttpServer = _
 
-  def start(port: Int): Unit = synchronized {
+  def start(port: Int, host: String = "localhost"): Unit = synchronized {
     if (server == null) {
-      server = HttpServer.create(new InetSocketAddress("localhost", port), 512)
+      server = HttpServer.create(new InetSocketAddress(host, port), 512)
       server.setExecutor(Executors.newFixedThreadPool(16))
       server.createContext("/", handle _)
       server.start()
-      println(s"[mock] API listening on http://localhost:$port")
+      println(s"[mock] API listening on http://$host:$port")
     }
   }
 
