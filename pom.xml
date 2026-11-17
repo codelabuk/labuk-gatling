@@ -12,6 +12,7 @@
         <module>gatling-api-core</module>
         <module>gatling-sql</module>
         <module>gatling-runner</module>
+        <module>loadtest-operator</module>
     </modules>
 
     <properties>

@@ -1,0 +1,58 @@
+# A distributed run of the SR flow on 5 workers.
+#   kubectl apply -f example-loadtest.yaml
+#   kubectl get loadtests -n perf -w                 # follow the phases
+#   kubectl get loadtest sr-flow-run-1 -n perf -o yaml   # status: result, reportPath, message
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: perf
+---
+# Results of all runs (one folder per run). On a multi-node cluster this must be ReadWriteMany
+# (EFS, Azure Files, Filestore, NFS, ...); a single-node dev cluster works with ReadWriteOnce.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: perf-results
+  namespace: perf
+spec:
+  accessModes: ["ReadWriteMany"]
+  resources: { requests: { storage: 20Gi } }
+  # storageClassName: <your RWX storage class>
+---
+# Secrets become environment variables: ${DB_PASSWORD} etc. in the plan.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: perf-secrets
+  namespace: perf
+stringData:
+  JWT_SECRET: change-me
+---
+apiVersion: perf.codelabuk.org/v1alpha1
+kind: LoadTest
+metadata:
+  name: sr-flow-run-1            # one LoadTest per run - create a new one (new name) for the next run
+  namespace: perf
+spec:
+  image: labuk-perf-runner:1.0-SNAPSHOT
+  plan:
+    git:
+      repo: https://git.example.com/qa/perf-tests.git
+      ref: main
+      # tokenSecret: { name: git-creds, key: token }    # private https repositories
+    file: plans/sr-email-status.yaml                    # relative to the repository root
+    # configMap: sr-tests                              # alternative: small flat test sets
+    # inImage: true + file: /tests/plans/x.yaml         # alternative: tests baked into a custom image
+  workers: 5
+  # scenarios: [ sr-status-check ]
+  env:
+    BASE_URL: https://sit.api.example.com
+  secretRefs: [ perf-secrets ]
+  resources:
+    requests: { cpu: "1", memory: 2Gi }
+    limits: { cpu: "2", memory: 4Gi }      # heap = 75% of the limit
+  # nodeSelector: { pool: perf-generators }
+  results:
+    pvc: perf-results
+  startDelaySeconds: 60          # workers are created, then all start at the same moment
+  timeoutMinutes: 120

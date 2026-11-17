@@ -13,7 +13,7 @@ gatling-api-core ──► gatling-sql ──┐
 | 1 | `gatling-api-core` v1.1 — hardening | H1–H5 done; extra step e2e tests open | S–M |
 | 2 | `gatling-sql` | v1 done (verified on Derby; Oracle not yet tried on a real DB) | M |
 | 3 | `gatling-runner` | v1 done (Docker image configured, not yet built) | M |
-| 4 | `loadtest-operator` | planned | L |
+| 4 | `loadtest-operator` | v1 done — tested against fabric8's mock API server; real-cluster run pending | L |
 | 5 | Platform — live metrics, result storage | planned | S–M |
 
 ---
@@ -177,6 +177,19 @@ events + `kubectl get loadtests` columns, `perf submit` / `perf status`, Helm ch
 Tests: JOSDK test utilities; end-to-end on kind/k3d against the mock API.
 **Done when** `perf submit --workers 5` runs the sample flow on 5 pods with one start time, no item processed
 twice, and one merged report with the right SLA verdict.
+
+**Status (v1):** Java 17, JOSDK 5.1.1 / fabric8 7.3.1. `LoadTest` CRD (`perf.codelabuk.org/v1alpha1`, short
+name `lt`) generated from Java; lifecycle Validating → Setup → Starting → Running → Aggregating →
+Completed/Failed with facts passed back through termination messages (`perf validate/report --facts-file`);
+plan from Git / ConfigMap / image; results on an existing PVC; owner references, TTL, no retries, non-root;
+manifests in `deploy/`. Verified: 9 tests (whole lifecycle against fabric8's mock API server, failure paths,
+idempotency, pod details, manifests parse) + the runner's env-driven worker path (`JOB_COMPLETION_INDEX`).
+**Not done / open:**
+- **Never run on a real cluster yet** — needs the two images built and a cluster (minikube is installed here).
+- Start time is set when the workers Job is created (now + `startDelaySeconds`), not when all pods are ready —
+  a pod that pulls its image slower than the delay starts late (it logs a warning).
+- `perf submit` / `perf status` CLI, Helm chart, printer columns for `kubectl get`, leader election (single replica now).
+- Results only on a PVC (no S3/MinIO upload yet); multi-node clusters need a ReadWriteMany storage class.
 
 ---
 

@@ -11,7 +11,7 @@ variables and conditions all live in the YAML; the engine has no business logic 
 | `gatling-api-core` | ✅ v1.1 | The engine: YAML loader + validation, HTTP, auth, data, flow control, load profiles, SLAs, distributed-run support (worker split, synchronised start, setup once, log merge) |
 | `gatling-sql` | ✅ v1 | `sql:` steps and `jdbc` data sources — any JDBC database (Oracle and PostgreSQL drivers included) |
 | `gatling-runner` | ✅ v1 | The `perf` command (zip for Windows/Linux/macOS) + Docker image config — no Maven needed for testers |
-| `loadtest-operator` | planned | Kubernetes operator (Java, fabric8) for distributed runs |
+| `loadtest-operator` | ✅ v1 (tested against a mock API server, not yet on a real cluster) | Kubernetes operator (Java, JOSDK + fabric8): one `LoadTest` = validate → setup → N workers → merged report |
 
 Stack: Java 17, Maven 3.9, Scala 2.13.15, Gatling 3.13.1.
 
@@ -549,6 +549,56 @@ Good to know:
   splitting) but calls the setup APIs N times.
 - Log merging is tied to Gatling's log format; it is supported for the pinned Gatling 3.13.1 and refuses
   logs from other versions.
+
+---
+
+## On Kubernetes (`loadtest-operator`)
+
+The operator automates the distributed steps above. Install once:
+
+```bash
+mvn install                                                    # builds everything, generates the CRD
+kubectl apply -f loadtest-operator/target/classes/META-INF/fabric8/loadtests.perf.codelabuk.org-v1.yml
+mvn -pl gatling-runner,loadtest-operator -am package jib:build -Dimage=...   # push both images (see each pom)
+kubectl apply -f loadtest-operator/deploy/operator.yaml        # namespace perf-system, RBAC, operator
+```
+
+Then each test run is one resource (full example: `loadtest-operator/deploy/example-loadtest.yaml`):
+
+```yaml
+apiVersion: perf.codelabuk.org/v1alpha1
+kind: LoadTest
+metadata: { name: orders-peak-0412, namespace: perf }
+spec:
+  image: registry.example.com/labuk-perf-runner:1.0.0
+  plan:
+    git: { repo: https://git.example.com/qa/perf-tests.git, ref: main, tokenSecret: { name: git-creds } }
+    file: plans/orders-peak.yaml
+  workers: 5
+  env: { BASE_URL: https://sit.api.example.com }
+  secretRefs: [ perf-secrets ]                 # passwords/tokens as ${...} values
+  resources: { limits: { cpu: "2", memory: 4Gi } }
+  results: { pvc: perf-results }               # existing claim; ReadWriteMany on multi-node clusters
+```
+
+```bash
+kubectl get loadtests -n perf -w           # phase: Validating, Setup, Running, Aggregating, Completed / Failed
+kubectl get lt orders-peak-0412 -n perf -o jsonpath='{.status.result} {.status.reportPath} {.status.message}'
+```
+
+What happens:
+
+| Phase | Kubernetes Job | Notes |
+|---|---|---|
+| Validating | `<name>-validate` runs `perf validate` | A bad plan fails here with the exact YAML error in `status.message` |
+| Setup | `<name>-setup` runs `perf setup` | Only if the plan has `setup.share`; runs once |
+| Running | `<name>-workers` — an Indexed Job with N pods | All start at `status.startAt` (now + `startDelaySeconds`); no retries, a crashed worker fails the run |
+| Aggregating | `<name>-report` runs `perf report` | Merged report on the results volume; `status.result` = `Passed` / `SLAFailed` |
+
+Tests come from **Git** (cloned by an init container, token from a Secret), a **ConfigMap** (small flat test
+sets, 1 MB limit) or **the image** (`inImage: true`, absolute `file`). Pods run as non-root; Jobs are owned
+by the LoadTest (deleting it deletes them) and are cleaned up `ttlSecondsAfterFinished` after finishing.
+Create a new LoadTest (new name) for every run — a finished one is never re-run.
 
 ---
 

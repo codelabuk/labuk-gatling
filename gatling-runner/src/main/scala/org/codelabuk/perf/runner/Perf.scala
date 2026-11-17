@@ -51,7 +51,7 @@ object Perf {
     case "run" :: rest                      => runPlan(Args.parse(rest))
     case "setup" :: rest                    => setup(Args.parse(rest))
     case "worker" :: rest                   => worker(Args.parse(rest))
-    case "report" :: rest                   => Merge.run(rest)
+    case "report" :: rest                   => report(rest)
     case other :: _ =>
       System.err.println(s"perf: unknown command '$other'\n"); System.err.println(Usage); 1
   }
@@ -62,7 +62,43 @@ object Perf {
     a.applyProps()
     val r = Validate.run(a.positional ++ a.passThrough("--workers", "--scenario"))
     (if (r.ok) System.out else System.err).println(r.report)
+    // --facts-file: a small JSON for automation (the operator reads it from /dev/termination-log)
+    a.opt("--facts-file").foreach { f =>
+      val facts =
+        if (!r.ok) Map("valid" -> false, "message" -> r.report.stripPrefix("INVALID: "))
+        else {
+          val plan = PlanLoader.load(Paths.get(a.positional.head))
+          Map("valid" -> true, "plan" -> plan.name, "hasSetup" -> plan.setup.exists(_.share.nonEmpty), "scenarios" -> plan.scenarios.map(_.name))
+        }
+      Facts.write(f, facts)
+    }
     if (r.ok) 0 else 1
+  }
+
+  /**
+   * Merges workers' logs. With --facts-file the SLA verdict goes into the file and the exit code is 0 whenever a
+   * report was built (so a Kubernetes Job succeeds); without it: 0 OK, 2 SLAs failed, 1 error.
+   */
+  private def report(rest: List[String]): Int = {
+    val a = Args.parse(rest)
+    a.opt("--facts-file") match {
+      case None => Merge.run(rest)
+      case Some(f) =>
+        val name = a.opt("--name").getOrElse("merged")
+        val withoutFacts = rest.patch(rest.indexOf("--facts-file"), Nil, 2)
+        val code = Merge.run(if (a.has("--name")) withoutFacts else withoutFacts ++ List("--name", name))
+        val output = a.opt("--output").map(Paths.get(_)).getOrElse {
+          val in = Paths.get(a.opt("--input").getOrElse("."))
+          in.resolveSibling(in.getFileName.toString + "-merged")
+        }
+        Facts.write(f, Map(
+          "reportBuilt" -> (code == 0 || code == 2),
+          "slaPassed" -> (code == 0),
+          "exitCode" -> code,
+          "report" -> output.resolve(name).resolve("index.html").toString
+        ))
+        if (code == 0 || code == 2) 0 else 1
+    }
   }
 
   private def runPlan(a: Args): Int = {
@@ -100,7 +136,9 @@ object Perf {
     if (!checkPlan(plan)) return 1
     val w = Worker.current
     val results = Paths.get(a.opt("--results").orElse(env("RESULTS_DIR")).getOrElse("results"))
-    val runDir = results.resolve(".runs").resolve(s"worker-${w.index}")
+    // Gatling's own output stays on local disk; only the final log goes to the (shared) results folder,
+    // so `perf report` never sees partial or duplicate logs
+    val runDir = Files.createTempDirectory(s"perf-worker-${w.index}-")
     val code = gatling(runDir, noReports = true, a.opt("--description"))
     val log = findLog(runDir)
     log.foreach { l =>
@@ -165,6 +203,23 @@ object Perf {
         .sortBy(p => Try(Files.getLastModifiedTime(p).toMillis).getOrElse(0L)).lastOption
       finally s.close()
     }
+}
+
+/** Small JSON facts for automation. Kept under 4 KB - the limit of a Kubernetes termination message. */
+object Facts {
+  private val json = new com.fasterxml.jackson.databind.ObjectMapper()
+
+  def write(file: String, facts: Map[String, Any]): Unit = {
+    def javaValue(v: Any): Any = v match {
+      case s: Seq[_] => s.map(javaValue).asJava
+      case s: String if s.length > 1500 => s.take(1500) + "..."
+      case other => other
+    }
+    val text = json.writeValueAsString(facts.map { case (k, v) => k -> javaValue(v) }.asJava)
+    val path = Paths.get(file)
+    Option(path.toAbsolutePath.getParent).filter(p => !Files.exists(p)).foreach(Files.createDirectories(_))
+    Files.write(path, text.take(4000).getBytes(java.nio.charset.StandardCharsets.UTF_8))
+  }
 }
 
 /** Command-line arguments: positional values, `--option value`, `--switch`, and `-DNAME=value`. */
