@@ -80,6 +80,11 @@ object Validate {
       sb ++= "\n  WARNINGS (queue data runs out - extra users stop immediately):\n"
       warnings.foreach(w => sb ++= s"    $w\n")
     }
+    val throttleWarnings = scenarios.flatMap(LoadMath.throttleWarning)
+    if (throttleWarnings.nonEmpty) {
+      sb ++= "\n  WARNINGS (throttle):\n"
+      throttleWarnings.foreach(w => sb ++= s"    $w\n")
+    }
     sb.result()
   }
 }

@@ -37,19 +37,58 @@ final class SqlAction(step: SqlStep, pool: Pool, val statsEngine: StatsEngine, c
   }
   private val expectedExprs: List[Expression[String]] = step.checks.map(c => if (c.kind == "column") c.expected.el[String] else (_: Session) => c.expected.success)
 
+  private def inExpr(p: SqlParam.In): Expression[Any] = p.literal match {
+    case Some(lit) => _ => lit.success
+    case None      => p.expr.el[Any]
+  }
+
+  /** Rows of a batch step: literal rows from the YAML, or a session list (of lists, maps or single values). */
+  private val batchRows: Session => Validation[List[List[SqlExecutor.Bound]]] = step.batch match {
+    case None => _ => Nil.success
+    case Some(BatchRows.Literal(rows)) =>
+      val exprs = rows.map(_.map(p => inExpr(p) -> p.sqlType))
+      session => exprs.foldLeft[Validation[List[List[SqlExecutor.Bound]]]](Nil.success) { (acc, row) =>
+        acc.flatMap(done => row.foldLeft[Validation[List[SqlExecutor.Bound]]](Nil.success) { case (r, (e, t)) =>
+          r.flatMap(vs => e(session).map(v => vs :+ SqlExecutor.BoundIn(v, t)))
+        }.map(done :+ _))
+      }
+    case Some(BatchRows.FromVariable(el, columns)) =>
+      val list = s"#{$el}".el[Any]
+      def values(item: Any): Validation[List[Any]] = item match {
+        case m: scala.collection.Map[_, _] =>
+          if (columns.isEmpty) s"batch rows from '$el' are maps - list their `columns:` in statement order".failure
+          else columns.map(c => m.asInstanceOf[scala.collection.Map[String, Any]].get(c).orElse(m.asInstanceOf[scala.collection.Map[String, Any]].get(c.toLowerCase))
+            .toRight(c)).foldLeft[Validation[List[Any]]](Nil.success) {
+              case (acc, Right(v)) => acc.map(_ :+ v)
+              case (_, Left(c))    => s"batch row from '$el' has no '$c' (has: ${m.keys.mkString(", ")})".failure
+            }
+        case s: Iterable[_]             => s.toList.success
+        case j: java.util.Collection[_] => j.toArray.toList.success
+        case single                     => List(single).success
+      }
+      session => list(session).flatMap {
+        case items: Iterable[_] =>
+          items.toList.foldLeft[Validation[List[List[SqlExecutor.Bound]]]](Nil.success) { (acc, item) =>
+            acc.flatMap(done => values(item).map(vs => done :+ vs.map(v => SqlExecutor.BoundIn(v, None))))
+          }
+        case other => s"batch rows: '$el' is not a list (got ${other.getClass.getSimpleName})".failure
+      }
+  }
+
   override protected def execute(session: Session): Unit = {
     val start = clock.nowMillis
-    val resolved: Validation[(List[SqlExecutor.Bound], List[String])] = for {
+    val resolved: Validation[(List[SqlExecutor.Bound], List[String], List[List[SqlExecutor.Bound]])] = for {
       bound <- paramExprs.foldLeft[Validation[List[SqlExecutor.Bound]]](Nil.success) {
         case (acc, Left((e, t))) => acc.flatMap(l => e(session).map(v => l :+ SqlExecutor.BoundIn(v, t)))
         case (acc, Right(out))   => acc.map(_ :+ out)
       }
       expected <- expectedExprs.foldLeft[Validation[List[String]]](Nil.success)((acc, e) => acc.flatMap(l => e(session).map(l :+ _)))
-    } yield (bound, expected)
+      rows <- batchRows(session)
+    } yield (bound, expected, rows)
 
     resolved match {
       case Failure(err) => finish(session, start, Left(s"parameters: $err"), None)
-      case Success((bound, expected)) =>
+      case Success((bound, expected, rows)) =>
         try {
           pool.executor.execute { () =>
             val waitStart = clock.nowMillis
@@ -58,7 +97,7 @@ final class SqlAction(step: SqlStep, pool: Pool, val statsEngine: StatsEngine, c
               try {
                 val c = pool.dataSource.getConnection
                 connectedAt = clock.nowMillis
-                try SqlExecutor.run(c, step, bound, expected, pool.conn.fetchSize)
+                try SqlExecutor.run(c, step, bound, expected, pool.conn.fetchSize, rows)
                 finally c.close()
               } catch {
                 case e: java.sql.SQLException => Left(SqlExecutor.sqlMessage(e))

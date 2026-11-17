@@ -66,6 +66,7 @@ object SimulationAssembler extends StrictLogging {
           .exec(ChainFactory.steps(sc.steps, ctx))
       val pop = injectWith(scenario(sc.name).exec(chain), injection(sc.load, worker))
       warnOnSmallQueues(sc, sources, worker)
+      LoadMath.throttleWarning(sc).foreach(w => logger.warn(w))
       if (sc.throttle.isEmpty) pop else pop.throttle(throttle(sc.throttle, worker): _*)
     }
 

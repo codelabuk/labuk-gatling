@@ -16,12 +16,16 @@ OUT="loadtest-operator/target/e2e"
 mkdir -p "$OUT"
 
 if [ -z "${SKIP_IMAGES:-}" ]; then
-  echo "== images (Jib -> local Docker -> minikube)"
-  mvn -B -q -pl gatling-runner jib:dockerBuild || exit 1
-  mvn -B -q -pl loadtest-operator jib:dockerBuild || exit 1
-  mvn -B -q -pl gatling-api-core -Pmock-image test-compile jib:dockerBuild || exit 1
+  echo "== images (docker build -> minikube)"
+  # Dockerfile path: Jib's own registry client was very slow behind Docker Desktop's proxy on the dev laptop
+  mvn -B -q -pl gatling-api-core test-compile dependency:copy-dependencies -DincludeScope=runtime -DoutputDirectory=target/lib || exit 1
+  docker build -q -t labuk-perf-runner:$VERSION gatling-runner >/dev/null || exit 1
+  docker build -q -t labuk-loadtest-operator:$VERSION loadtest-operator >/dev/null || exit 1
+  docker build -q -t labuk-mock-api:$VERSION -f gatling-api-core/src/test/docker/Dockerfile gatling-api-core/target >/dev/null || exit 1
   for i in labuk-perf-runner labuk-loadtest-operator labuk-mock-api; do
-    minikube image load "$i:$VERSION" --overwrite=true || exit 1
+    # straight into minikube's container runtime (docker driver); `minikube image load` needs wmic,
+    # which newer Windows 11 versions no longer have
+    docker save "$i:$VERSION" | docker exec -i minikube docker load >/dev/null || minikube image load "$i:$VERSION" --overwrite=true || exit 1
   done
 fi
 

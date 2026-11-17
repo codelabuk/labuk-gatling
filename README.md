@@ -11,7 +11,7 @@ variables and conditions all live in the YAML; the engine has no business logic 
 | `gatling-api-core` | ✅ v1.1 | The engine: YAML loader + validation, HTTP, auth, data, flow control, load profiles, SLAs, distributed-run support (worker split, synchronised start, setup once, log merge) |
 | `gatling-sql` | ✅ v1 | `sql:` steps and `jdbc` data sources — any JDBC database (Oracle and PostgreSQL drivers included) |
 | `gatling-runner` | ✅ v1 | The `perf` command (zip for Windows/Linux/macOS) + Docker image config — no Maven needed for testers |
-| `loadtest-operator` | ✅ v1 (tested against a mock API server, not yet on a real cluster) | Kubernetes operator (Java, JOSDK + fabric8): one `LoadTest` = validate → setup → N workers → merged report |
+| `loadtest-operator` | ✅ v1 (verified on minikube, installed with Helm) | Kubernetes operator (Java, JOSDK + fabric8): one `LoadTest` = validate → setup → N workers → merged report |
 
 Stack: Java 17, Maven 3.9, Scala 2.13.15, Gatling 3.13.1.
 
@@ -144,7 +144,7 @@ perf-tests/
 └── plans/         orders-peak.yaml, payments-soak.yaml
 ```
 
-All paths inside a plan (`include`, CSV files, body files) resolve **relative to the plan file**.
+Paths resolve **relative to the file they are written in**: `include` and paths in the plan relative to the plan, body and CSV files in an included API catalog relative to that catalog — so a catalog works from any plan.
 
 ---
 
@@ -419,7 +419,7 @@ load:
     - constantConcurrentUsers: { users: 20, during: 1h }    # 20 users / 4.5s = ~266/min
 ```
 
-`throttle` can also cap the total rate, but only in whole requests/second per worker.
+`throttle` can also cap the total rate, but only in whole requests/second per worker. **Gatling stops the scenario when the throttle schedule ends** — users still waiting for the cap are dropped — so make `holdFor` cover the whole test; `perf validate` and the run warn when it does not.
 
 ### Sizing a load generator
 
@@ -519,6 +519,7 @@ Column names are lower-case in variables (`#{customer_id}`), whatever the databa
 | `query:` | `SELECT` / `WITH` | Read-only; checks `rowCount`, `column` + `equals` |
 | `update:` | `INSERT` / `UPDATE` / `DELETE` / DDL | Needs `allowWrites: true`; check `updateCount` |
 | `call:` | Stored procedures `{call pkg.proc(?, ?)}` | Needs `allowWrites: true`; OUT params, result rows |
+| `batch:` | Many rows in one round-trip | Needs `allowWrites: true`; `rows:` is a YAML list (`- [ "#{sr}", note ]`) or a variable (`rows: "#{orderIds}"`; for a list of maps add `columns: [id, status]`); check `updateCount` (the total) |
 
 **Parameters**, one per `?`: a literal (`42`, `ACTIVE`), a variable (`"#{orderId}"`), a typed value
 `{ value: "19.99", type: decimal }` (types: `string int long decimal double boolean date timestamp null`), or

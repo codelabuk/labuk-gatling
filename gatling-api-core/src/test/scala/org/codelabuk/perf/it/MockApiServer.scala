@@ -23,6 +23,9 @@ object MockApiServer {
   val SrCount = 30
   /** One SR stays PENDING forever, so the demo shows how a poll that gives up is reported. */
   val StuckSr = "SR-0030"
+  val ItemCount = 5
+  val ApiKey = "k123"
+  private val flakyCalls = new ConcurrentHashMap[String, AtomicInteger]()
 
   private val json = new ObjectMapper()
   private val readyAt = new ConcurrentHashMap[String, java.lang.Long]()
@@ -81,11 +84,44 @@ object MockApiServer {
           val remaining = if (ready == Long.MaxValue) 2L else math.ceil((ready - System.currentTimeMillis()) / 1000.0).toLong
           reply(ex, 200, s"""{"waitSeconds":${math.max(1L, math.min(remaining, 2L))}}""")
 
+        // ---- generic endpoints for the feature tests (no token needed)
+        case ("GET", List("ping")) => reply(ex, 200, """{"ok":true}""")
+
+        case ("GET", List("items")) =>
+          reply(ex, 200, (1 to ItemCount).map(i => s"""{"id":$i,"name":"item-$i"}""").mkString("""{"items":[""", ",", "]}"))
+
+        case ("GET", List("items", id)) =>
+          if (id.toIntOption.exists(i => i >= 1 && i <= ItemCount)) reply(ex, 200, s"""{"id":$id,"name":"item-$id"}""")
+          else reply(ex, 404, """{"error":"no such item"}""")
+
+        // fails `failTimes` times per key, then succeeds - for retry / stop-on-failure tests
+        case ("GET", List("flaky", key)) =>
+          val failTimes = query(ex).get("failTimes").flatMap(_.toIntOption).getOrElse(1)
+          val n = flakyCalls.computeIfAbsent(key, _ => new AtomicInteger).incrementAndGet()
+          if (n <= failTimes) reply(ex, 500, s"""{"error":"flaky failure $n"}""") else reply(ex, 200, s"""{"ok":true,"calls":$n}""")
+
+        // echoes what was sent - for form / raw / file body tests
+        case ("POST", List("echo")) =>
+          val body = new String(ex.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)
+          val ct = Option(ex.getRequestHeaders.getFirst("Content-Type")).getOrElse("")
+          val node = json.createObjectNode().put("contentType", ct).put("body", body)
+          reply(ex, 200, json.writeValueAsString(node))
+
+        case ("GET", List("secure")) =>
+          if (ex.getRequestHeaders.getFirst("X-Api-Key") == ApiKey) reply(ex, 200, """{"ok":true}""")
+          else reply(ex, 401, """{"error":"missing or wrong X-Api-Key"}""")
+
         case _ => reply(ex, 404, """{"error":"not found"}""")
       }
     } catch {
       case e: Exception => reply(ex, 500, s"""{"error":"${e.getMessage}"}""")
     }
+
+  private def query(ex: HttpExchange): Map[String, String] =
+    Option(ex.getRequestURI.getRawQuery).toList.flatMap(_.split('&')).flatMap(_.split("=", 2) match {
+      case Array(k, v) => Some(k -> java.net.URLDecoder.decode(v, StandardCharsets.UTF_8))
+      case _           => None
+    }).toMap
 
   private def authorized(ex: HttpExchange): Boolean =
     Option(ex.getRequestHeaders.getFirst("Authorization")).filter(_.startsWith("Bearer ")).map(_.stripPrefix("Bearer ")).exists { token =>

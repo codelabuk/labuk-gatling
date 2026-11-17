@@ -1,0 +1,71 @@
+# Exercises every step type end to end against the mock API; FeatureRunSpec checks the results record by record.
+name: features
+baseUrl: ${BASE_URL:http://localhost:18080}
+include: [ apis/features.yaml ]
+
+scenarios:
+  - name: steps
+    steps:
+      - set: { mode: test, key: "#{randomUuid()}", failTimes: 2 }
+      - api: listItems
+      - forEach:
+          list: ids
+          as: id
+          steps: [ { api: itemById } ]
+      - repeat:
+          times: 2
+          steps: [ { api: ping, name: ping-repeat } ]
+      - if:
+          condition: "#{mode} == 'test' and exists #{key}"
+          then: [ { api: ping, name: ping-if } ]
+          else: [ { api: ping, name: ping-else } ]
+      - randomSwitch:
+          - { percent: 50, steps: [ { api: ping, name: ping-a } ] }
+          - { percent: 50, steps: [ { api: ping, name: ping-b } ] }
+      - retry:
+          times: 3
+          steps: [ { api: flaky, name: flaky-retry } ]
+      - transaction: bodies
+        steps:
+          - api: echoForm
+          - api: echoRaw
+          - api: echoFile
+    load:
+      profile: [ { atOnceUsers: 20 } ]
+
+  - name: stop-on-failure
+    steps:
+      - set: { key: "#{randomUuid()}", failTimes: 1 }
+      - api: flaky
+        name: flaky-once
+      - stopUserIfFailed: true
+      - api: ping
+        name: after-stop
+    load:
+      profile: [ { atOnceUsers: 3 } ]
+
+  - name: static-auth
+    auth: { type: static, value: k123, header: X-Api-Key, prefix: "" }
+    steps: [ { api: secure } ]
+    load:
+      profile: [ { atOnceUsers: 2 } ]
+
+  - name: closed
+    steps:
+      - loop:
+          during: 2s
+          steps:
+            - pace: 500ms
+            - api: ping
+              name: ping-closed
+    load:
+      profile: [ { constantConcurrentUsers: { users: 3, during: 3s } } ]
+
+  - name: throttled
+    steps: [ { api: ping, name: ping-throttled } ]
+    load:
+      profile: [ { constantUsersPerSec: { rate: 40, during: 3s } } ]
+    throttle:
+      - reachRps: 10
+        in: 1s
+      - holdFor: 3s

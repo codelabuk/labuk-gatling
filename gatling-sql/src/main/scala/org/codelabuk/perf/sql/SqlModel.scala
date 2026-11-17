@@ -40,7 +40,7 @@ final case class SqlExtract(saveAs: String, kind: String, column: Option[String]
 final case class SqlStep(
     name: String,
     datasource: String,
-    mode: String, // query | update | call
+    mode: String, // query | update | call | batch
     statement: String,
     params: List[SqlParam],
     checks: List[SqlCheck],
@@ -48,8 +48,17 @@ final case class SqlStep(
     timeout: Option[FiniteDuration],
     maxRows: Int,
     rollback: Boolean,
-    reportConnectionWait: Boolean
+    reportConnectionWait: Boolean,
+    batch: Option[BatchRows] = None
 )
+
+/** Rows of a `batch:` statement - written in the YAML, or a list variable resolved at run time. */
+sealed trait BatchRows
+object BatchRows {
+  final case class Literal(rows: List[List[SqlParam.In]]) extends BatchRows
+  /** Each item of the list: a list of values, a map read in `columns` order, or a single value. */
+  final case class FromVariable(el: String, columns: List[String]) extends BatchRows
+}
 
 /** Reads the YAML for connections, feeders and `sql` steps - shared by validation and build. */
 object SqlModel {
@@ -134,14 +143,14 @@ object SqlModel {
 
   def step(n: Node, plan: TestPlan): SqlStep = {
     val v = n.get("sql")
-    v.allowOnly("datasource", "name", "query", "update", "call", "params", "checks", "extract", "timeout", "maxRows", "rollback",
-      "reportConnectionWait")
+    v.allowOnly("datasource", "name", "query", "update", "call", "batch", "rows", "columns", "params", "checks", "extract", "timeout",
+      "maxRows", "rollback", "reportConnectionWait")
     val ds = v.str("datasource")
     val conn = connection(ds, connectionNode(plan, ds, v.get("datasource")))
-    val modes = List("query", "update", "call").filter(v.has)
+    val modes = List("query", "update", "call", "batch").filter(v.has)
     val mode = modes match {
       case List(m) => m
-      case Nil     => v.fail("needs one of: query (SELECT), update (INSERT/UPDATE/DELETE/DDL) or call (stored procedure)")
+      case Nil     => v.fail("needs one of: query (SELECT), update (INSERT/UPDATE/DELETE/DDL), call (stored procedure) or batch (many rows)")
       case many    => v.fail(s"use only one of ${many.mkString(", ")}")
     }
     val statement = v.str(mode)
@@ -149,10 +158,39 @@ object SqlModel {
       v.get("query").fail("`query` is for SELECT statements - use `update:` for INSERT/UPDATE/DELETE or `call:` for procedures")
     if (mode != "query" && !conn.allowWrites)
       v.get(mode).fail(s"connection '$ds' is read-only - set `allowWrites: true` on it to run $mode statements")
-    val params = v.optList("params").map(param)
-    if (mode != "call" && params.exists(_.isInstanceOf[SqlParam.Out])) v.get("params").fail("OUT parameters are only for `call:`")
     val placeholders = statement.replaceAll("'[^']*'", "").count(_ == '?') // ignore ? inside string literals
-    if (placeholders != params.size)
+
+    val batch: Option[BatchRows] =
+      if (mode != "batch") {
+        if (v.has("rows") || v.has("columns")) v.fail("`rows` / `columns` are only for `batch:`")
+        None
+      } else {
+        if (v.has("params")) v.get("params").fail("a batch takes its values from `rows`, not `params`")
+        val rows = v.get("rows")
+        if (rows.isArray) {
+          if (v.has("columns")) v.get("columns").fail("`columns` is only needed when `rows` is a variable of maps")
+          val literal = rows.list.map { r =>
+            val values = if (r.isArray) r.list else List(r)
+            if (values.size != placeholders) r.fail(s"this row has ${values.size} value(s) but the statement has $placeholders '?' placeholder(s)")
+            values.map(param).map {
+              case in: SqlParam.In => in
+              case _               => r.fail("OUT parameters are not allowed in a batch")
+            }
+          }
+          if (literal.isEmpty) rows.fail("at least one row is required")
+          Some(BatchRows.Literal(literal))
+        } else {
+          val el = rows.text.trim.stripPrefix("#{").stripSuffix("}").trim
+          val columns = v.opt("columns").map(_.stringList).getOrElse(Nil)
+          if (columns.nonEmpty && columns.size != placeholders)
+            v.get("columns").fail(s"${columns.size} column(s) listed but the statement has $placeholders '?' placeholder(s)")
+          Some(BatchRows.FromVariable(el, columns))
+        }
+      }
+
+    val params = if (mode == "batch") Nil else v.optList("params").map(param)
+    if (mode != "call" && params.exists(_.isInstanceOf[SqlParam.Out])) v.get("params").fail("OUT parameters are only for `call:`")
+    if (mode != "batch" && placeholders != params.size)
       v.fail(s"the statement has $placeholders '?' placeholder(s) but ${params.size} param(s) are given")
 
     val checks = v.optList("checks").map { c =>
@@ -163,7 +201,7 @@ object SqlModel {
       } else {
         val kind = List("rowCount", "updateCount").find(c.has).getOrElse(c.fail("expected rowCount, updateCount or column + equals"))
         if (kind == "updateCount" && mode == "query") c.fail("updateCount is for update/call statements - use rowCount for queries")
-        if (kind == "rowCount" && mode == "update") c.fail("rowCount is for queries - use updateCount for update statements")
+        if (kind == "rowCount" && (mode == "update" || mode == "batch")) c.fail(s"rowCount is for queries - use updateCount for $mode statements")
         c.str(kind) match {
           case CheckOp(op, num) => SqlCheck(kind, None, Option(op).getOrElse("=="), num)
           case other            => c.get(kind).fail(s"expected a number with an optional operator, e.g. '>= 1' - got '$other'")
@@ -192,7 +230,8 @@ object SqlModel {
       timeout = v.optDuration("timeout"),
       maxRows = v.optInt("maxRows").getOrElse(1000),
       rollback = v.optBool("rollback").getOrElse(false),
-      reportConnectionWait = v.optBool("reportConnectionWait").getOrElse(false)
+      reportConnectionWait = v.optBool("reportConnectionWait").getOrElse(false),
+      batch = batch
     )
   }
 }

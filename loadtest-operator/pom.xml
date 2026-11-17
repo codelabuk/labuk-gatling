@@ -100,6 +100,23 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- libraries next to the jar, for the Dockerfile build path -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.8.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-libs</id>
+                        <phase>package</phase>
+                        <goals><goal>copy-dependencies</goal></goals>
+                        <configuration>
+                            <includeScope>runtime</includeScope>
+                            <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- operator image:  mvn -pl loadtest-operator -am package jib:dockerBuild -->
             <plugin>
                 <groupId>com.google.cloud.tools</groupId>

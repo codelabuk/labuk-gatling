@@ -24,15 +24,16 @@ object SqlExecutor {
    * @param expected column-check values resolved from the session, in check order
    * @return Right(variables to save) or Left(error message for the report)
    */
-  def run(conn: Connection, step: SqlStep, bound: Seq[Bound], expected: Seq[String], fetchSize: Option[Int]): Either[String, Map[String, Any]] =
+  def run(conn: Connection, step: SqlStep, bound: Seq[Bound], expected: Seq[String], fetchSize: Option[Int],
+          batchRows: Seq[Seq[Bound]] = Nil): Either[String, Map[String, Any]] =
     try {
       val outcome =
         if (step.rollback) {
           val auto = conn.getAutoCommit
           conn.setAutoCommit(false)
-          try execute(conn, step, bound, fetchSize)
+          try execute(conn, step, bound, fetchSize, batchRows)
           finally { conn.rollback(); conn.setAutoCommit(auto) }
-        } else execute(conn, step, bound, fetchSize)
+        } else execute(conn, step, bound, fetchSize, batchRows)
       verify(step, outcome, expected).toLeft(()).flatMap(_ => extract(step, outcome))
     } catch {
       case e: java.sql.SQLException => Left(sqlMessage(e))
@@ -45,7 +46,7 @@ object SqlExecutor {
     s"${Option(e.getMessage).map(_.linesIterator.next().trim).getOrElse(e.getClass.getSimpleName)}$state"
   }
 
-  private def execute(conn: Connection, step: SqlStep, bound: Seq[Bound], fetchSize: Option[Int]): Outcome =
+  private def execute(conn: Connection, step: SqlStep, bound: Seq[Bound], fetchSize: Option[Int], batchRows: Seq[Seq[Bound]]): Outcome =
     step.mode match {
       case "query" =>
         val ps = conn.prepareStatement(step.statement)
@@ -61,6 +62,19 @@ object SqlExecutor {
           prepare(ps, step, fetchSize); bindAll(ps, bound)
           Outcome(Vector.empty, Some(ps.executeUpdate()), Map.empty)
         } finally ps.close()
+
+      case "batch" =>
+        if (batchRows.isEmpty) Outcome(Vector.empty, Some(0), Map.empty)
+        else {
+          val ps = conn.prepareStatement(step.statement)
+          try {
+            prepare(ps, step, fetchSize)
+            batchRows.foreach { row => bindAll(ps, row); ps.addBatch() }
+            // drivers may answer SUCCESS_NO_INFO (-2) per row: count those rows as 1
+            val counts = ps.executeBatch()
+            Outcome(Vector.empty, Some(counts.map(c => if (c == java.sql.Statement.SUCCESS_NO_INFO) 1 else math.max(c, 0)).sum), Map.empty)
+          } finally ps.close()
+        }
 
       case "call" =>
         val cs = conn.prepareCall(step.statement)

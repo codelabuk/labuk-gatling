@@ -13,7 +13,7 @@ gatling-api-core ──► gatling-sql ──┐
 | 1 | `gatling-api-core` v1.1 — hardening | H1–H5 done; extra step e2e tests open | S–M |
 | 2 | `gatling-sql` | v1 done (verified on Derby; Oracle not yet tried on a real DB) | M |
 | 3 | `gatling-runner` | v1 done (Docker image configured, not yet built) | M |
-| 4 | `loadtest-operator` | v1 done — tested against fabric8's mock API server; real-cluster run pending | L |
+| 4 | `loadtest-operator` | v1 done — **verified on a real cluster** (minikube, Helm-installed) | L |
 | 5 | Platform — live metrics, result storage | planned | S–M |
 
 ---
@@ -185,11 +185,7 @@ plan from Git / ConfigMap / image; results on an existing PVC; owner references,
 manifests in `deploy/`. Verified: 9 tests (whole lifecycle against fabric8's mock API server, failure paths,
 idempotency, pod details, manifests parse) + the runner's env-driven worker path (`JOB_COMPLETION_INDEX`).
 **Not done / open:**
-- **Never run on a real cluster yet.** Ready: minikube, Helm chart, `scripts/minikube-e2e.sh`. Blocked on building
-  the images on the dev laptop: Jib's direct pull from Docker Hub crawled (15+ min; `docker pull` of the same base
-  took 20 s via Docker Desktop's proxy), and with the local base (`-Djib.from.image=docker://eclipse-temurin:17-jre`)
-  the hand-off to Docker Desktop still stalled. Next step: `jib:buildTar` + `docker load -i` to find the slow part,
-  or build on CI / a machine without the proxy.
+- ✅ **Verified on a real cluster** (minikube, Kubernetes 1.33, operator installed with the Helm chart): `scripts/minikube-e2e.sh` ran a 2-worker LoadTest Validating → Setup → Running → Aggregating → Completed (`result: Passed`) and copied the merged report back. Images are built with plain `docker build` (Dockerfiles in `gatling-runner/`, `loadtest-operator/`, `gatling-api-core/src/test/docker/`) because Jib's hand-off to Docker Desktop stalled on the dev laptop; Jib still works for pushing straight to a registry from CI. On Windows, `minikube image load` needs `wmic` (gone in newer Windows 11), so the script streams images with `docker save | docker exec -i minikube docker load`.
 - Start time is set when the workers Job is created (now + `startDelaySeconds`), not when all pods are ready —
   a pod that pulls its image slower than the delay starts late (it logs a warning).
 - ✅ Helm chart `charts/loadtest-operator` (CRD in `crds/`, kept identical to the generated one by the build;

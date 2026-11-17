@@ -1,0 +1,35 @@
+# Generic mock endpoints used by plans/features.yaml
+apis:
+  ping:
+    request: GET /ping
+    checks: [ { status: 200 } ]
+  listItems:
+    request: GET /items
+    checks: [ { status: 200 } ]
+    extract:
+      ids: { jsonPath: "$.items[*].id", all: true }
+  itemById:
+    request: GET /items/#{id}
+    checks:
+      - status: 200
+      - jsonPath: $.id
+        equals: "#{id}"
+  flaky:
+    request: GET /flaky/#{key}
+    query: { failTimes: "#{failTimes}" }
+    checks: [ { status: 200 } ]
+  echoForm:
+    request: POST /echo
+    body: { form: { user: "#{mode}-user", note: "hello world" } }
+    checks: [ { bodyContains: x-www-form-urlencoded }, { bodyContains: "user=test-user" } ]
+  echoRaw:
+    request: POST /echo
+    body: { raw: "<order mode=\"#{mode}\"/>", contentType: application/xml }
+    checks: [ { bodyContains: application/xml }, { bodyContains: "order mode" } ]
+  echoFile:
+    request: POST /echo
+    body: { file: ../bodies/order.json }
+    checks: [ { bodyContains: order-test } ]
+  secure:
+    request: GET /secure
+    checks: [ { status: 200 } ]

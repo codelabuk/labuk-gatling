@@ -84,6 +84,48 @@ object LoadMath {
       case _                                     => 0
     }.maxOption.getOrElse(0))
 
+  /** How long the injection profile runs. */
+  def loadDuration(load: LoadDef): scala.concurrent.duration.FiniteDuration = {
+    import scala.concurrent.duration._
+    load.profile.map {
+      case InjectionDef.RampUsers(_, d)                  => d
+      case InjectionDef.ConstantRate(_, d, _)            => d
+      case InjectionDef.RampRate(_, _, d, _)             => d
+      case InjectionDef.StressPeak(_, d)                 => d
+      case InjectionDef.Nothing(d)                       => d
+      case InjectionDef.ConstantConcurrent(_, d)         => d
+      case InjectionDef.RampConcurrent(_, _, d)          => d
+      case InjectionDef.IncrementRate(_, n, l, r, _)     => l * n.toLong + r * (n - 1).toLong
+      case InjectionDef.IncrementConcurrent(_, n, l, r, _) => l * n.toLong + r * (n - 1).toLong
+      case _                                             => Duration.Zero
+    }.foldLeft(Duration.Zero: FiniteDuration)(_ + _)
+  }
+
+  /**
+   * Gatling STOPS the scenario when its throttle schedule ends. A schedule shorter than the load silently
+   * cuts the test short, so this returns a warning for that case.
+   */
+  def throttleWarning(sc: org.codelabuk.perf.model.ScenarioDef): Option[String] = {
+    import scala.concurrent.duration._
+    import org.codelabuk.perf.model.ThrottleDef
+    if (sc.throttle.isEmpty) None
+    else {
+      val throttled = sc.throttle.map {
+        case ThrottleDef.ReachRps(_, in) => in
+        case ThrottleDef.HoldFor(d)      => d
+        case _                           => Duration.Zero
+      }.foldLeft(Duration.Zero: FiniteDuration)(_ + _)
+      // the scenario needs at least as long as its injection, and - since every user sends at least one
+      // request - at least (users / throttle rate) to get all users through the cap
+      val maxRps = sc.throttle.collect { case ThrottleDef.ReachRps(t, _) => t; case ThrottleDef.JumpToRps(t) => t }.maxOption.getOrElse(0.0)
+      val drain = plannedArrivals(sc.load, Worker(0, 1)).filter(_ => maxRps > 0).map(n => (n / maxRps * 1000).toLong.millis)
+      val needed = (loadDuration(sc.load) :: drain.toList).max
+      Option.when(throttled < needed)(
+        s"scenario '${sc.name}': the throttle schedule lasts ${throttled.toSeconds}s but the load needs at least ${needed.toSeconds}s - " +
+          "Gatling stops the scenario when the throttle ends (users still waiting are dropped); extend holdFor to cover the whole test")
+    }
+  }
+
   def describe(load: LoadDef, w: Worker): String =
     plannedArrivals(load, w).map(n => s"~$n users").orElse(peakConcurrency(load, w).map(n => s"$n concurrent")).getOrElse("")
 }

@@ -64,6 +64,19 @@ class SqlSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(before == after)
   }
 
+  test("batch: many rows in one round-trip, update count is the total") {
+    val s = step("batch", "INSERT INTO audit (sr, note) VALUES (?, ?)", checks = List(SqlCheck("updateCount", None, "==", "3")))
+    val rows = Seq("a", "b", "c").map(x => Seq(BoundIn("SR-B", None), BoundIn(s"note $x", None)))
+    val c = DerbyFixture.connect()
+    try {
+      assert(SqlExecutor.run(c, s, Nil, Seq(""), None, rows) == Right(Map.empty))
+      val count = c.createStatement().executeQuery("SELECT COUNT(*) FROM audit WHERE sr = 'SR-B'")
+      count.next(); assert(count.getInt(1) == 3)
+      // a failing check is reported
+      assert(SqlExecutor.run(c, s, Nil, Seq(""), None, rows.take(1)) == Left("updateCount 1 is not == 3"))
+    } finally c.close()
+  }
+
   // ---------------------------------------------------------------- YAML validation
 
   private val dir = Paths.get(getClass.getResource("/plans/sql-and-api.yaml").toURI).getParent
@@ -97,6 +110,11 @@ class SqlSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(planError(rw, "      - sql: { datasource: db, query: \"SELECT 1 FROM orders\", checks: [ { updateCount: 1 } ] }").contains("use rowCount"))
     // a connection is not test data
     assert(planError(rw, "      - feed: db").contains("feed 'db' is not a data source or setup share"))
+    // batch rows must fit the statement
+    assert(planError(rw, "      - sql: { datasource: db, batch: \"INSERT INTO audit (sr, note) VALUES (?, ?)\", rows: [ [ a ] ] }")
+      .contains("this row has 1 value(s) but the statement has 2"))
+    assert(planError(ro, "      - sql: { datasource: db, batch: \"INSERT INTO audit (sr) VALUES (?)\", rows: [ a ] }").contains("read-only"))
+    assert(planError(rw, "      - sql: { datasource: db, update: \"DELETE FROM audit\", rows: [ a ] }").contains("only for `batch:`"))
   }
 
   test("validation: the sample plan with API + SQL loads") {

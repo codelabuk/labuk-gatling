@@ -24,6 +24,8 @@ object Perf {
       |  perf setup    <plan.yaml> --out shared.json                        run only `setup`, save its shared lists
       |  perf worker   [options]                                            one worker of a distributed run (settings from env)
       |  perf report   --input <logs-dir> [--output <dir>] [--name <run>]   merge workers' logs -> one report + SLA verdict
+      |  perf submit   <plan.yaml> --workers N ...                          start a distributed run on Kubernetes (perf submit --help)
+      |  perf status   <run> [-n namespace] [--watch]                       follow it; with --watch exit 0 Passed, 2 SLAFailed, 1 Failed
       |
       |run / worker options:
       |  --scenario a,b           run only these scenarios                    (env SCENARIO)
@@ -53,6 +55,8 @@ object Perf {
     case "setup" :: rest                    => setup(Args.parse(rest))
     case "worker" :: rest                   => worker(Args.parse(rest))
     case "report" :: rest                   => report(rest)
+    case "submit" :: rest                   => Kube.submit(rest)
+    case "status" :: rest                   => Kube.status(rest)
     case other :: _ =>
       System.err.println(s"perf: unknown command '$other'\n"); System.err.println(Usage); 1
   }

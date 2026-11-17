@@ -28,18 +28,19 @@ object PlanLoader {
     val baseDir = file.getParent
     val root = read(file).allowOnly(TopKeys: _*)
 
-    // apis + dataSources may come from the plan itself and from included files
+    // apis + dataSources may come from the plan itself and from included files; paths inside each
+    // (body files, CSV files) resolve relative to the file they are written in
     val includes = root.optList("include").map { n =>
       val f = baseDir.resolve(n.text).normalize()
       if (!Files.isRegularFile(f)) n.fail(s"included file not found: $f")
-      read(f).allowOnly(IncludeKeys: _*)
+      read(f).allowOnly(IncludeKeys: _*) -> f.getParent
     }
-    val sources = includes :+ root
+    val sources = includes :+ (root -> baseDir)
+    def entries(key: String): List[(String, (Node, Path))] =
+      sources.flatMap { case (s, dir) => s.opt(key).toList.flatMap(_.entries).map { case (k, n) => k -> (n -> dir) } }
 
-    val apis = mergeUnique(sources.flatMap(s => s.opt("apis").toList.flatMap(_.entries)), "API")
-      .map { case (k, n) => k -> parseApi(k, n, baseDir) }
-    val dataSourceNodes = mergeUnique(sources.flatMap(s => s.opt("dataSources").toList.flatMap(_.entries)), "data source")
-    val dataSources = dataSourceNodes.map { case (k, n) => k -> parseDataSource(k, n, baseDir) }
+    val apis = mergeUnique(entries("apis"), "API").map { case (k, (n, dir)) => k -> parseApi(k, n, dir) }
+    val dataSources = mergeUnique(entries("dataSources"), "data source").map { case (k, (n, dir)) => k -> parseDataSource(k, n, dir) }
 
     val http = root.opt("http").map { h =>
       h.allowOnly("headers", "shareConnections")
@@ -79,8 +80,8 @@ object PlanLoader {
     node
   }
 
-  private def mergeUnique(entries: List[(String, Node)], what: String): List[(String, Node)] = {
-    entries.groupBy(_._1).collectFirst { case (k, dups) if dups.size > 1 => dups.last._2.fail(s"$what '$k' is defined more than once") }
+  private def mergeUnique(entries: List[(String, (Node, Path))], what: String): List[(String, (Node, Path))] = {
+    entries.groupBy(_._1).collectFirst { case (k, dups) if dups.size > 1 => dups.last._2._1.fail(s"$what '$k' is defined more than once") }
     entries
   }
 

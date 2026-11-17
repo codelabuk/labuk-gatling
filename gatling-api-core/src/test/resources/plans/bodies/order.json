@@ -1,0 +1,1 @@
+{ "ref": "order-#{mode}", "lines": [ { "sku": "A-1", "qty": 2 } ] }

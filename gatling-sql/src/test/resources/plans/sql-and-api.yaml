@@ -51,6 +51,13 @@ scenarios:
               extract: { orderIds: { column: id, all: true } }
           - sql:
               datasource: db
+              name: touch-history-batch               # one batch from an extracted list, rolled back
+              batch: "UPDATE orders SET status = 'SEEN' WHERE id = ?"
+              rows: "#{orderIds}"
+              rollback: true
+              checks: [ { updateCount: ">= 1" } ]
+          - sql:
+              datasource: db
               name: cancel-dry-run                    # measured, then rolled back
               update: "UPDATE orders SET status = 'CANCELLED' WHERE id = ?"
               params: [ "#{orderId}" ]
@@ -77,6 +84,14 @@ scenarios:
           update: "INSERT INTO audit (sr, note) VALUES (?, ?)"
           params: [ "#{sr}", "seen by user #{randomInt(1,1000)}" ]
           checks: [ { updateCount: 1 } ]
+      - sql:
+          datasource: db
+          name: write-audit-batch                    # literal rows written in the YAML
+          batch: "INSERT INTO audit (sr, note) VALUES (?, ?)"
+          rows:
+            - [ "#{sr}", "batch row 1" ]
+            - [ "#{sr}", "batch row 2" ]
+          checks: [ { updateCount: 2 } ]
       - sql:
           datasource: db
           name: read-audit
