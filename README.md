@@ -10,14 +10,58 @@ variables and conditions all live in the YAML; the engine has no business logic 
 |---|---|---|
 | `gatling-api-core` | ✅ v1.1 | The engine: YAML loader + validation, HTTP, auth, data, flow control, load profiles, SLAs, distributed-run support (worker split, synchronised start, setup once, log merge) |
 | `gatling-sql` | ✅ v1 | `sql:` steps and `jdbc` data sources — any JDBC database (Oracle and PostgreSQL drivers included) |
-| `gatling-runner` | planned | `perf run / validate` launcher + Docker image — no Maven needed for testers |
+| `gatling-runner` | ✅ v1 | The `perf` command (zip for Windows/Linux/macOS) + Docker image config — no Maven needed for testers |
 | `loadtest-operator` | planned | Kubernetes operator (Java, fabric8) for distributed runs |
 
 Stack: Java 17, Maven 3.9, Scala 2.13.15, Gatling 3.13.1.
 
 ---
 
-## Quick start
+## The `perf` command (for testers — no Maven)
+
+Build once (framework team): `mvn install` → `gatling-runner/target/perf-1.0-SNAPSHOT.zip`.
+Testers unzip it anywhere; only Java 17+ is needed.
+
+```bash
+perf validate plans/orders.yaml --workers 4          # check a plan, see the per-worker split
+perf run      plans/orders.yaml -DBASE_URL=https://sit.api.example.com
+perf run      plans/orders.yaml --scenario checkout --results D:/perf-results
+```
+(Windows: `perf.cmd ...`; Git Bash works with `perf` too.)
+
+| Command | What it does |
+|---|---|
+| `perf validate <plan> [--workers N]` | Checks the plan without sending traffic; prints the split per worker |
+| `perf run <plan> [options] [-DNAME=value]` | Runs it on this machine; HTML report under `results/` |
+| `perf setup <plan> --out shared.json` | Runs only `setup` and saves its shared lists (distributed runs) |
+| `perf worker` | One worker of a distributed run; settings from env (`PLAN`, `WORKER_INDEX`/`JOB_COMPLETION_INDEX`, `WORKER_COUNT`, `START_AT`, `SHARED_IN`, `RESULTS_DIR`); writes `worker-<i>.log` |
+| `perf report --input <logs> [--output <dir>]` | Merges workers' logs → one report + SLA verdict |
+
+Options for `run` / `worker`: `--scenario a,b`, `--results <dir>`, `--workers N --worker-index i`,
+`--start-at <time>`, `--shared-in <file>`, `--no-reports`, `--description <text>`, `-DNAME=value`.
+Environment: `PERF_HEAP` (default `2g`), `PERF_JAVA_OPTS`, `JAVA_HOME`.
+**Exit codes:** `0` OK · `1` error or invalid plan · `2` SLAs failed — use them in CI.
+
+The zip contains `bin/` (launchers), `lib/` (engine, Gatling, SQL support, Oracle + PostgreSQL drivers),
+`drivers/` (drop extra JDBC jars here) and `conf/logback.xml` (logging).
+
+**Docker image** (configured, built with Jib — no Docker daemon needed to build):
+```bash
+mvn -pl gatling-runner -am package jib:dockerBuild                               # into local Docker
+mvn -pl gatling-runner -am package jib:build -Dimage=<registry>/labuk-perf-runner  # push to a registry
+docker run --rm -v "$PWD/perf-tests:/tests" labuk-perf-runner:1.0-SNAPSHOT run /tests/plans/orders.yaml
+```
+The image runs as a non-root user, sizes its heap from the container memory limit (75%), reads extra
+drivers from `/opt/perf/drivers/`, and writes worker results to `RESULTS_DIR` (default `/tmp/results` —
+mount a volume there).
+
+**Live metrics:** Gatling 3.13's open-source edition cannot stream metrics while a test runs (it only has
+console and file output). Each worker prints a summary every 5 seconds to its console / pod log; the full
+report comes at the end. A live dashboard is on the roadmap as a design item.
+
+---
+
+## Quick start (framework developers, with Maven)
 
 ```bash
 # build + unit tests

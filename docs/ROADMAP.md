@@ -12,7 +12,7 @@ gatling-api-core ──► gatling-sql ──┐
 |---|---|---|---|
 | 1 | `gatling-api-core` v1.1 — hardening | H1–H5 done; extra step e2e tests open | S–M |
 | 2 | `gatling-sql` | v1 done (verified on Derby; Oracle not yet tried on a real DB) | M |
-| 3 | `gatling-runner` | planned | M |
+| 3 | `gatling-runner` | v1 done (Docker image configured, not yet built) | M |
 | 4 | `loadtest-operator` | planned | L |
 | 5 | Platform — live metrics, result storage | planned | S–M |
 
@@ -130,6 +130,12 @@ Work items:
 8. CI examples (Jenkins, GitLab): validate on merge request, run on schedule, fail on SLA.
 
 **Done when** a tester with only Java (or Docker) can validate, run and merge, and the same image runs as a pod.
+
+**Status (v1):** items 1, 2, 4, 5 done and verified from the unzipped distribution against the mock API —
+`perf validate`, `perf run`, `perf setup` → 2 × `perf worker` (env-driven, synchronised start, 15/15 split) →
+`perf report` (merged report, SLA verdict), bad plan = one-line error + exit 1; `perf.cmd` verified on Windows.
+Item 3 (Jib image) configured; build not yet run. Item 6 dropped (see above). **Open:** build + smoke-test the
+image, item 7 (OS tuning guidance), item 8 (CI examples).
 
 ---
 
