@@ -27,8 +27,15 @@ Verified on the team's Docker Desktop Kubernetes with the platform's MinIO (`scr
   (every request/transaction OK) and distributed via `perf submit --s3` (3 workers, 36 requests, 0 KO, Passed);
 - `perf fetch` (new) downloaded reports from MinIO.
 
+Found and fixed: **Gatling 3.13 deadlocks at start-up when the JVM sees 1 CPU** (its actor pool has one thread
+per CPU; the controller blocks that thread waiting for the result writers). This hits 1-CPU containers and pods
+with a 1-CPU limit. `perf` now restarts itself with `-XX:ActiveProcessorCount=2` (thread count only - the CPU
+limit still applies). Verified: `docker run --cpus=1 ... run` hung before, completes now. The Maven
+`gatling:test` path is not covered (developer machines have more cores).
+
 | Open | Needs |
 |---|---|
+| Spreading workers one per node on multi-node clusters (anti-affinity / topology spread) - not built yet | decision + small change |
 | Oracle-specific behaviour (REF CURSOR, PL/SQL OUT params, driver settings) - distributed SQL on a real DB | a dev Oracle database (or the Oracle Free container) |
 | Grafana dashboard in a real Grafana + Prometheus | a Grafana/Prometheus instance |
 | CI examples (`docs/ci/`) in a real Jenkins / GitLab | the team's CI |

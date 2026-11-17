@@ -44,10 +44,31 @@ object Perf {
       |exit codes: 0 OK, 1 error or invalid plan, 2 SLAs failed""".stripMargin
 
   def main(args: Array[String]): Unit = {
-    val code = run(args.toList)
+    val code = relaunchIfSingleCpu(args).getOrElse(run(args.toList))
     System.out.flush()
     sys.exit(code)
   }
+
+  /**
+   * Gatling 3.13 deadlocks at start-up when the JVM sees 1 CPU: its actor pool has one thread per CPU and the
+   * controller blocks that only thread while waiting for the result writers (crash after 5 s, then the run hangs).
+   * 1-CPU containers and pods are common, so perf restarts itself once telling the JVM to see 2 CPUs. That only
+   * changes thread counts - the real CPU limit (docker --cpus, Kubernetes limits) still applies.
+   */
+  private def relaunchIfSingleCpu(args: Array[String]): Option[Int] =
+    if (Runtime.getRuntime.availableProcessors >= 2 || sys.props.contains("perf.relaunched")) None
+    else {
+      val javaExe = Paths.get(sys.props("java.home"), "bin", "java").toString
+      val jvmArgs = java.lang.management.ManagementFactory.getRuntimeMXBean.getInputArguments.asScala
+        .filterNot(_.startsWith("-XX:ActiveProcessorCount")).toList
+      // the class path goes through an argument file: on Windows the expanded lib/* list can exceed the command-line limit
+      val cpFile = Files.createTempFile("perf-classpath", ".txt")
+      Files.write(cpFile, List("-cp", "\"" + sys.props("java.class.path").replace("\\", "/") + "\"").asJava)
+      cpFile.toFile.deleteOnExit()
+      val cmd = (javaExe :: jvmArgs) ++ List("-XX:ActiveProcessorCount=2", "-Dperf.relaunched=true", s"@$cpFile", "org.codelabuk.perf.runner.Perf") ++ args
+      System.err.println("perf: only 1 CPU visible - restarting with the JVM set to 2 CPUs (Gatling needs 2 threads; the CPU limit itself is unchanged)")
+      Some(new ProcessBuilder(cmd.asJava).inheritIO().start().waitFor())
+    }
 
   def run(args: List[String]): Int = args match {
     case Nil                                => println(Usage); 1
