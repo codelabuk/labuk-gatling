@@ -28,6 +28,21 @@ spec:
               image:
                 description: "perf runner image, e.g. registry/labuk-perf-runner:1.0.0"
                 type: "string"
+              metrics:
+                description: "Live Prometheus metrics from every worker while the\
+                  \ test runs"
+                properties:
+                  enabled:
+                    description: "Serve /metrics on each worker and add prometheus.io/*\
+                      \ scrape annotations to the worker pods"
+                    type: "boolean"
+                  lingerSeconds:
+                    description: "Seconds a worker keeps serving its final values\
+                      \ after its load ends, so the last scrape sees them"
+                    type: "integer"
+                  port:
+                    type: "integer"
+                type: "object"
               nodeSelector:
                 additionalProperties:
                   type: "string"

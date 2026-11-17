@@ -6,6 +6,7 @@ import java.time.Instant
 import io.gatling.core.Predef._
 import org.codelabuk.perf.build.SimulationAssembler
 import org.codelabuk.perf.load.{PlanException, PlanLoader, RunOptions}
+import org.codelabuk.perf.metrics.LiveMetricsService
 
 /**
  * The one generic simulation: it reads a YAML plan and runs it. Testers never write Scala.
@@ -30,6 +31,19 @@ class YamlSimulation extends Simulation {
   private val assembled = SimulationAssembler.assemble(plan, opts)
   println(assembled.summary)
   println(f"  load generator: ${Runtime.getRuntime.maxMemory / 1024.0 / 1024 / 1024}%.1f GB max heap, ${Runtime.getRuntime.availableProcessors} CPU(s)")
+
+  // live metrics (Prometheus format) while the test runs: -Dmetrics.port=9464 / METRICS_PORT
+  private val liveMetrics = RunOptions.setting("metrics.port", "METRICS_PORT").map { port =>
+    val worker = org.codelabuk.perf.data.Worker.current
+    new LiveMetricsService(
+      port.toIntOption.getOrElse(throw new PlanException(s"metrics.port must be a number, got '$port'")),
+      Paths.get(RunOptions.setting("metrics.results").getOrElse("results")),
+      plan.name, s"${worker.index}", System.currentTimeMillis())
+  }
+  liveMetrics.foreach { m =>
+    before(m.start())
+    after(m.stop(RunOptions.setting("metrics.linger", "METRICS_LINGER_SECONDS").flatMap(_.toIntOption).getOrElse(15)))
+  }
 
   // synchronised start: every worker waits for the same moment before injecting load
   opts.startAt.foreach { at =>

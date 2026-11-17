@@ -86,10 +86,26 @@ public final class JobFactory {
         env.put("RESULTS_DIR", runDir + "/logs");
         if (sharedIn) env.put("SHARED_IN", runDir + "/shared.json");
         if (!spec.scenarios.isEmpty()) env.put("SCENARIO", String.join(",", spec.scenarios));
+        boolean metrics = spec.metrics != null && spec.metrics.enabled;
+        if (metrics) {
+            env.put("METRICS_PORT", String.valueOf(spec.metrics.port));
+            env.put("METRICS_LINGER_SECONDS", String.valueOf(spec.metrics.lingerSeconds));
+        }
         Job job = job(lt, Role.workers, List.of("worker"), env, spec.workers);
         job.getSpec().setCompletionMode("Indexed");
-        job.getSpec().setActiveDeadlineSeconds((long) spec.timeoutMinutes * 60 + spec.startDelaySeconds);
-        job.getSpec().getTemplate().getSpec().getContainers().get(0).setResources(spec.resources);
+        job.getSpec().setActiveDeadlineSeconds((long) spec.timeoutMinutes * 60 + spec.startDelaySeconds
+                + (metrics ? spec.metrics.lingerSeconds : 0));
+        Container perf = job.getSpec().getTemplate().getSpec().getContainers().get(0);
+        perf.setResources(spec.resources);
+        if (metrics) {
+            perf.setPorts(List.of(new io.fabric8.kubernetes.api.model.ContainerPortBuilder()
+                    .withName("metrics").withContainerPort(spec.metrics.port).build()));
+            // the de-facto standard annotations; a PodMonitor can select the role label instead
+            job.getSpec().getTemplate().getMetadata().setAnnotations(Map.of(
+                    "prometheus.io/scrape", "true",
+                    "prometheus.io/port", String.valueOf(spec.metrics.port),
+                    "prometheus.io/path", "/metrics"));
+        }
         return job;
     }
 

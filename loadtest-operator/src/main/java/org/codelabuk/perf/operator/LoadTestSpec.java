@@ -56,6 +56,19 @@ public class LoadTestSpec {
     @JsonPropertyDescription("Seconds to keep finished Jobs and pods (logs) before Kubernetes deletes them")
     public int ttlSecondsAfterFinished = 3600;
 
+    @JsonPropertyDescription("Live Prometheus metrics from every worker while the test runs")
+    public Metrics metrics = new Metrics();
+
+    public static class Metrics {
+        @JsonPropertyDescription("Serve /metrics on each worker and add prometheus.io/* scrape annotations to the worker pods")
+        public boolean enabled = false;
+
+        public int port = 9464;
+
+        @JsonPropertyDescription("Seconds a worker keeps serving its final values after its load ends, so the last scrape sees them")
+        public int lingerSeconds = 30;
+    }
+
     public static class Plan {
         @Required
         @JsonPropertyDescription("Plan file: relative to the repository / ConfigMap root, or an absolute path inside the image")

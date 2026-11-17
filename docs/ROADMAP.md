@@ -185,7 +185,11 @@ plan from Git / ConfigMap / image; results on an existing PVC; owner references,
 manifests in `deploy/`. Verified: 9 tests (whole lifecycle against fabric8's mock API server, failure paths,
 idempotency, pod details, manifests parse) + the runner's env-driven worker path (`JOB_COMPLETION_INDEX`).
 **Not done / open:**
-- **Never run on a real cluster yet** — needs the two images built and a cluster (minikube is installed here).
+- **Never run on a real cluster yet.** Ready: minikube, Helm chart, `scripts/minikube-e2e.sh`. Blocked on building
+  the images on the dev laptop: Jib's direct pull from Docker Hub crawled (15+ min; `docker pull` of the same base
+  took 20 s via Docker Desktop's proxy), and with the local base (`-Djib.from.image=docker://eclipse-temurin:17-jre`)
+  the hand-off to Docker Desktop still stalled. Next step: `jib:buildTar` + `docker load -i` to find the slow part,
+  or build on CI / a machine without the proxy.
 - Start time is set when the workers Job is created (now + `startDelaySeconds`), not when all pods are ready —
   a pod that pulls its image slower than the delay starts late (it logs a warning).
 - ✅ Helm chart `charts/loadtest-operator` (CRD in `crds/`, kept identical to the generated one by the build;
@@ -200,7 +204,7 @@ idempotency, pod details, manifests parse) + the runner's env-driven worker path
 | Part | Choice |
 |---|---|
 | Result storage | MinIO (S3-compatible) or the cloud's bucket, with expiry rules |
-| Live metrics | **Needs design** — Gatling 3.13 OSS cannot stream metrics (no Graphite writer). Options: (a) our own exporter: a recording check on every request + the SQL action feed a Prometheus endpoint per worker → Grafana; (b) watch the console summary each worker prints every 5 s (pod logs); (c) rely on server-side APM/Prometheus during tests and Gatling's report after. |
+| Live metrics | ✅ **Done (v1).** Each worker follows its own `simulation.log` while it is written (`LiveLogReader`) and serves Prometheus metrics (`--metrics-port` / `METRICS_PORT`; LoadTest `spec.metrics`), so the numbers equal the report's. Verified: counters grew during a run and ended at 264 = the report's 264; chunked-write test with 5 random cut patterns. Latency = Gatling's log chunk size / write rate (~1 s at high load, up to ~20 s at a few req/s). Grafana dashboard `docs/grafana/perf-dashboard.json` — **valid JSON, not yet tried in a real Grafana/Prometheus**. Note: the reader is tied to Gatling 3.13.1's log format, like the merger. |
 | Server metrics | Existing Prometheus/APM alongside the Gatling dashboard |
 | Load generators | Dedicated (spot) node pool that scales to zero between tests |
 

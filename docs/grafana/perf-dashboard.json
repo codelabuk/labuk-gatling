@@ -1,0 +1,109 @@
+{
+  "title": "Perf - live load test",
+  "uid": "perf-live",
+  "description": "Live metrics of running load tests (perf --metrics-port / LoadTest spec.metrics). Sums all workers.",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": { "from": "now-30m", "to": "now" },
+  "refresh": "10s",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus"
+      },
+      {
+        "name": "plan",
+        "label": "Plan",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": { "query": "label_values(perf_requests_total, plan)", "refId": "plan" },
+        "refresh": 2,
+        "includeAll": false
+      },
+      {
+        "name": "request",
+        "label": "Request",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": { "query": "label_values(perf_requests_total{plan=\"$plan\"}, request)", "refId": "request" },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Requests / s",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [ { "refId": "A", "expr": "sum(rate(perf_requests_total{plan=\"$plan\"}[1m]))" } ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "decimals": 1 } }
+    },
+    {
+      "id": 2, "type": "stat", "title": "Error %",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [ { "refId": "A", "expr": "100 * sum(rate(perf_requests_total{plan=\"$plan\",status=\"KO\"}[1m])) / clamp_min(sum(rate(perf_requests_total{plan=\"$plan\"}[1m])), 1e-9)" } ],
+      "fieldConfig": { "defaults": { "unit": "percent", "decimals": 2, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 5 } ] } } }
+    },
+    {
+      "id": 3, "type": "stat", "title": "p95 response time (all requests)",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [ { "refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(perf_response_time_ms_bucket{plan=\"$plan\"}[1m])))" } ],
+      "fieldConfig": { "defaults": { "unit": "ms", "decimals": 0 } }
+    },
+    {
+      "id": 4, "type": "stat", "title": "Active virtual users",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [ { "refId": "A", "expr": "sum(perf_users_active{plan=\"$plan\"})" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Requests / s by request",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [ { "refId": "A", "expr": "sum by (request) (rate(perf_requests_total{plan=\"$plan\",request=~\"$request\"}[1m]))", "legendFormat": "{{request}}" } ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "p95 response time by request",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [ { "refId": "A", "expr": "histogram_quantile(0.95, sum by (le, request) (rate(perf_response_time_ms_bucket{plan=\"$plan\",request=~\"$request\"}[1m])))", "legendFormat": "{{request}}" } ],
+      "fieldConfig": { "defaults": { "unit": "ms" } }
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Errors / s by message",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [ { "refId": "A", "expr": "sum by (message) (rate(perf_errors_total{plan=\"$plan\"}[1m]))", "legendFormat": "{{message}}" } ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Active users by scenario (all workers)",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [ { "refId": "A", "expr": "sum by (scenario) (perf_users_active{plan=\"$plan\"})", "legendFormat": "{{scenario}}" } ]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Transactions: p95 duration",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [ { "refId": "A", "expr": "histogram_quantile(0.95, sum by (le, transaction) (rate(perf_transaction_duration_ms_bucket{plan=\"$plan\"}[1m])))", "legendFormat": "{{transaction}}" } ],
+      "fieldConfig": { "defaults": { "unit": "ms" } }
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Requests / s by worker",
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [ { "refId": "A", "expr": "sum by (worker) (rate(perf_requests_total{plan=\"$plan\"}[1m]))", "legendFormat": "worker {{worker}}" } ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    }
+  ]
+}

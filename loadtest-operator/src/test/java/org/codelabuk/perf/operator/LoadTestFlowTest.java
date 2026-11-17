@@ -182,6 +182,24 @@ class LoadTestFlowTest {
     }
 
     @Test
+    void metricsMakeWorkersScrapeable() {
+        LoadTest lt = loadTest("with-metrics");
+        lt.getSpec().metrics.enabled = true;
+        Job workers = JobFactory.workers(lt, JobFactory.runDir(lt), "2026-11-20T10:01:00Z", false);
+        var tpl = workers.getSpec().getTemplate();
+        Container perf = tpl.getSpec().getContainers().get(0);
+        assertEquals("9464", env(perf).get("METRICS_PORT"));
+        assertEquals("30", env(perf).get("METRICS_LINGER_SECONDS"));
+        assertEquals(9464, perf.getPorts().get(0).getContainerPort());
+        assertEquals("true", tpl.getMetadata().getAnnotations().get("prometheus.io/scrape"));
+        // without metrics: no port, no annotations
+        Job plain = JobFactory.workers(loadTest("plain"), "/results/x", "2026-11-20T10:01:00Z", false);
+        assertTrue(plain.getSpec().getTemplate().getSpec().getContainers().get(0).getPorts().isEmpty());
+        var annotations = plain.getSpec().getTemplate().getMetadata().getAnnotations();
+        assertTrue(annotations == null || annotations.isEmpty());
+    }
+
+    @Test
     void badSpecFailsBeforeCreatingAnything() {
         LoadTest lt = loadTest("no-source");
         lt.getSpec().plan.git = null;

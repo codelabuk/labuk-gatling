@@ -144,6 +144,9 @@
                     <simulationClass>${gatling.simulationClass}</simulationClass>
                     <jvmArgs>
                         <jvmArg>-Xmx${perf.heap}</jvmArg>
+                        <!-- no anonymous usage analytics; live metrics (-Dmetrics.port) follow this folder -->
+                        <jvmArg>-Dgatling.data.enableAnalytics=false</jvmArg>
+                        <jvmArg>-Dmetrics.results=${project.build.directory}/gatling</jvmArg>
                     </jvmArgs>
                 </configuration>
             </plugin>

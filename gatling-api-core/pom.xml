@@ -176,6 +176,9 @@
                     <jvmArgs>
                         <!-- load generator heap; raise for big tests: -Dperf.heap=4g (keep ~half of the machine's RAM) -->
                         <jvmArg>-Xmx${perf.heap}</jvmArg>
+                        <!-- no anonymous usage analytics; live metrics (-Dmetrics.port) follow this folder -->
+                        <jvmArg>-Dgatling.data.enableAnalytics=false</jvmArg>
+                        <jvmArg>-Dmetrics.results=${project.build.directory}/gatling</jvmArg>
                     </jvmArgs>
                 </configuration>
             </plugin>

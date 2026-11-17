@@ -55,9 +55,28 @@ The image runs as a non-root user, sizes its heap from the container memory limi
 drivers from `/opt/perf/drivers/`, and writes worker results to `RESULTS_DIR` (default `/tmp/results` —
 mount a volume there).
 
-**Live metrics:** Gatling 3.13's open-source edition cannot stream metrics while a test runs (it only has
-console and file output). Each worker prints a summary every 5 seconds to its console / pod log; the full
-report comes at the end. A live dashboard is on the roadmap as a design item.
+**Live metrics** — `perf run plans/x.yaml --metrics-port 9464` (or `METRICS_PORT`; with Maven
+`-Dmetrics.port=9464`) serves Prometheus metrics on `http://<host>:9464/metrics` while the test runs:
+
+| Metric | Labels |
+|---|---|
+| `perf_requests_total` | `request` (incl. transaction path), `status` OK/KO — API calls, SQL steps, poll results |
+| `perf_response_time_ms` (histogram) | `request` — use `histogram_quantile(0.95, ...)` for p95 |
+| `perf_transactions_total`, `perf_transaction_duration_ms` | `transaction`, `status` |
+| `perf_users_active` (gauge), `perf_users_started_total` | `scenario` |
+| `perf_errors_total` | `message` (top 50) |
+
+Every series has `plan` and `worker` labels, so dashboards sum across workers. A Grafana dashboard is in
+`docs/grafana/perf-dashboard.json` (import it, pick the Prometheus data source).
+How it works: Gatling's open-source edition cannot stream metrics, so each worker follows its own
+`simulation.log` as it is written — the totals match the final report exactly. Gatling writes that log in
+chunks, so the numbers trail by ~1 s at hundreds of req/s and by up to ~20 s at a few req/s (`perf` halves the
+chunk to 4 KB when metrics are on; with Maven add `-Dgatling.data.file.bufferSize=4096`). After the load ends
+a worker keeps serving its final values for 15 s (`METRICS_LINGER_SECONDS`) so the last scrape sees them.
+On Kubernetes set `spec.metrics.enabled: true` in the LoadTest: worker pods get the port and
+`prometheus.io/scrape` annotations.
+
+Gatling's anonymous usage analytics are switched off in `perf` and in the Maven runs.
 
 ---
 

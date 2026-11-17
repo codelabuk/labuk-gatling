@@ -32,6 +32,7 @@ object Perf {
       |  --start-at <time>        wait until then: epoch ms or 2026-11-20T10:00:00Z  (env START_AT)
       |  --shared-in <file>       skip setup, use lists saved by `perf setup` (env SHARED_IN)
       |  --no-reports             only write simulation.log (workers)
+      |  --metrics-port <port>    live Prometheus metrics on http://<host>:<port>/metrics while running (env METRICS_PORT)
       |  --description <text>     run description shown in the report
       |  -DNAME=value             fills ${NAME} in the plan (environment variables work too)
       |
@@ -168,6 +169,7 @@ object Perf {
     a.opt("--shared-in").foreach(sys.props("shared.in") = _)
     a.opt("--workers").foreach(sys.props("worker.count") = _)
     a.opt("--worker-index").foreach(sys.props("worker.index") = _)
+    a.opt("--metrics-port").foreach(sys.props("metrics.port") = _)
     if (a.has("--workers") && !a.has("--worker-index") && RunOptions.setting("worker.index", "WORKER_INDEX", "JOB_COMPLETION_INDEX").isEmpty)
       sys.props("worker.index") = "0"
   }
@@ -180,6 +182,12 @@ object Perf {
   /** Runs Gatling in this JVM with the generic simulation; returns its exit code (2 = SLAs failed). */
   private def gatling(results: Path, noReports: Boolean, description: Option[String]): Int = {
     Files.createDirectories(results)
+    // Gatling sends anonymous usage analytics by default - a company test tool sends nothing unless asked to
+    if (!sys.props.contains("gatling.data.enableAnalytics")) sys.props("gatling.data.enableAnalytics") = "false"
+    // live metrics follow the log of this run
+    sys.props("metrics.results") = results.toAbsolutePath.toString
+    if (RunOptions.setting("metrics.port", "METRICS_PORT").isDefined && !sys.props.contains("gatling.data.file.bufferSize"))
+      sys.props("gatling.data.file.bufferSize") = "4096" // smaller write chunks = fresher live metrics
     com.typesafe.config.ConfigFactory.invalidateCaches() // pick up -Dgatling.* settings made above
     val args = List("--simulation", classOf[YamlSimulation].getName, "--results-folder", results.toAbsolutePath.toString) ++
       (if (noReports) List("--no-reports") else Nil) ++
