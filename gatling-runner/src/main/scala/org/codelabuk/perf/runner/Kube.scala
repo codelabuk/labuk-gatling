@@ -19,7 +19,10 @@ object Kube {
     """perf submit <plan.yaml> --workers N [options]
       |  tests from Git:    --git-repo <url> [--git-ref main] [--git-token-secret <secret>]   plan path relative to the repo
       |  or a local folder: --from-dir <dir>   uploaded as a ConfigMap (flat folder, 1 MB limit); plan path relative to it
-      |  --image <runner image>     (env PERF_IMAGE)        --pvc <results claim>   (env PERF_PVC)
+      |  --image <runner image>     (env PERF_IMAGE)
+      |  results on a volume:  --pvc <results claim>                                      (env PERF_PVC)
+      |  or in S3 / MinIO:     --s3 s3://bucket/prefix --s3-secret <secret> [--s3-endpoint http://minio:9000]
+      |                        (env PERF_S3_URL, PERF_S3_SECRET, PERF_S3_ENDPOINT; the secret holds AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)
       |  --namespace <ns>           (env PERF_NAMESPACE)    --context <kube ctx>    (env PERF_KUBE_CONTEXT)
       |  --name <run name>          default: <plan>-<yyyyMMdd-HHmmss>
       |  --env NAME=value ...  --secret <name> ...  --scenario a,b  --cpu 2  --memory 4Gi  --start-delay 60  --metrics
@@ -29,7 +32,7 @@ object Kube {
       plan: String,
       workers: Int,
       image: String,
-      pvc: String,
+      results: Either[String, (String, Option[String], String)], // pvc | (s3 url, endpoint, credentials secret)
       namespace: String,
       name: String,
       gitRepo: Option[String],
@@ -56,7 +59,14 @@ object Kube {
       workers <- a.opt("--workers").map(w => w.toIntOption.filter(_ >= 1).toRight(s"--workers must be a positive number, got '$w'"))
         .getOrElse(Right(1))
       image <- opt("--image", "PERF_IMAGE").toRight("--image (or PERF_IMAGE) is required - the perf runner image")
-      pvc <- opt("--pvc", "PERF_PVC").toRight("--pvc (or PERF_PVC) is required - the results PersistentVolumeClaim")
+      results <- opt("--s3", "PERF_S3_URL") match {
+        case Some(url) if !url.startsWith("s3://") => Left(s"--s3 must look like s3://bucket/prefix, got '$url'")
+        case Some(url) =>
+          opt("--s3-secret", "PERF_S3_SECRET").toRight("--s3-secret (or PERF_S3_SECRET) is required with --s3 - a Secret with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY")
+            .map(secret => Right((url, opt("--s3-endpoint", "PERF_S3_ENDPOINT"), secret)))
+        case None =>
+          opt("--pvc", "PERF_PVC").map(Left(_)).toRight("results need --pvc (or PERF_PVC) or --s3 (or PERF_S3_URL)")
+      }
       source <- (opt("--git-repo", "PERF_GIT_REPO"), a.opt("--from-dir")) match {
         case (Some(_), Some(_)) => Left("use either --git-repo or --from-dir, not both")
         case (None, None)       => Left("where are the tests? --git-repo <url> or --from-dir <dir>")
@@ -78,7 +88,7 @@ object Kube {
         plan = plan,
         workers = workers,
         image = image,
-        pvc = pvc,
+        results = results,
         namespace = opt("--namespace", "PERF_NAMESPACE").getOrElse("perf"),
         name = a.opt("--name").getOrElse(s"${base.take(40)}-$stamp"),
         gitRepo = source._1,
@@ -118,7 +128,11 @@ object Kube {
       val limits = (s.cpu.map(c => s"cpu: ${q(c)}") ++ s.memory.map(m => s"memory: ${q(m)}")).mkString(", ")
       sb ++= s"  resources: { requests: { $limits }, limits: { $limits } }\n"
     }
-    sb ++= s"  results: { pvc: ${q(s.pvc)} }\n"
+    s.results match {
+      case Left(pvc) => sb ++= s"  results: { pvc: ${q(pvc)} }\n"
+      case Right((url, endpoint, secret)) =>
+        sb ++= s"  results:\n    s3: { url: ${q(url)}, credentialsSecret: ${q(secret)}${endpoint.map(e => s", endpoint: ${q(e)}").getOrElse("")} }\n"
+    }
     s.startDelay.foreach(d => sb ++= s"  startDelaySeconds: $d\n")
     if (s.metrics) sb ++= "  metrics: { enabled: true }\n"
     sb.result()
@@ -184,7 +198,9 @@ object Kube {
       values("phase") match {
         case "Completed" | "Failed" =>
           println(s"result: ${Option(values("result")).filter(_.nonEmpty).getOrElse("-")}  workers ok/failed: ${values("workersSucceeded")}/${values("workersFailed")}")
-          if (values("reportPath").nonEmpty) println(s"report: ${values("reportPath")} (on the results volume)")
+          val report = values("reportPath")
+          if (report.startsWith("s3://")) println(s"report: $report\n  download: perf fetch ${report.stripSuffix("/index.html")}")
+          else if (report.nonEmpty) println(s"report: $report (on the results volume)")
           return if (values("phase") == "Failed") 1 else if (values("result") == "Passed") 0 else 2
         case _ if !a.has("--watch") => return 0
         case _ => Thread.sleep(5000)

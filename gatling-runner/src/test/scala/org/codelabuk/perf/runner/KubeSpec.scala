@@ -26,6 +26,18 @@ class KubeSpec extends AnyFunSuite {
     assert(yaml.contains("configMap: \"run-2-tests\"") && yaml.contains("file: \"sr.yaml\"") && !yaml.contains("git:"), yaml)
   }
 
+  test("submit: results in S3 / MinIO instead of a volume") {
+    val s = Kube.parseSubmit(List("p.yaml", "--git-repo", "r", "--s3", "s3://perf-results/runs", "--s3-secret", "minio-creds",
+      "--s3-endpoint", "http://minio.minio.svc:9000", "--name", "x"), Map("PERF_IMAGE" -> "img").get).toOption.get
+    val yaml = Kube.loadTestYaml(s)
+    assert(yaml.contains("s3: { url: \"s3://perf-results/runs\", credentialsSecret: \"minio-creds\", endpoint: \"http://minio.minio.svc:9000\" }"), yaml)
+    assert(!yaml.contains("pvc"))
+    def err(args: String*) = Kube.parseSubmit(args.toList, Map("PERF_IMAGE" -> "img").get).swap.toOption.get
+    assert(err("p.yaml", "--git-repo", "r", "--s3", "s3://b").contains("--s3-secret"))
+    assert(err("p.yaml", "--git-repo", "r", "--s3", "http://b", "--s3-secret", "x").contains("s3://bucket/prefix"))
+    assert(err("p.yaml", "--git-repo", "r").contains("--pvc (or PERF_PVC) or --s3"))
+  }
+
   test("submit: missing or conflicting options are explained") {
     def err(args: String*) = Kube.parseSubmit(args.toList, envDefaults.get).swap.toOption.get
     assert(err("p.yaml").contains("where are the tests?"))

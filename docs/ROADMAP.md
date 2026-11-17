@@ -16,18 +16,24 @@ gatling-api-core ──► gatling-sql ──┐
 | 4 | `loadtest-operator` | ✅ done — **verified on a real cluster** (minikube, Helm-installed); S3 results, printer columns, leader election added after | L |
 | 5 | Platform — live metrics, result storage | ✅ live metrics + Grafana dashboard; S3/MinIO results | S–M |
 
-### Status — 2026-11-17: all planned code is written
+### Status — 2026-11-17
 
-65 tests (core 37, SQL 7, runner 10, operator 11). Open items are verifications that need something not
-available on the dev laptop:
+71 tests (core 37, SQL 7, runner 16, operator 11). Target platform: **on-prem Kubernetes**.
+
+Verified on the team's Docker Desktop Kubernetes with the platform's MinIO (`scripts/docker-desktop-e2e.sh`):
+- distributed API run (SR flow, 3 workers, results in MinIO): Completed / Passed — 260 requests, 1 intentional KO;
+- operator with 2 replicas: one held the Lease and created all Jobs;
+- **LoadRunner**: `perf convert-lr` (new) converted a recorded-style VuGen script; the result ran in Gatling
+  (every request/transaction OK) and distributed via `perf submit --s3` (3 workers, 36 requests, 0 KO, Passed);
+- `perf fetch` (new) downloaded reports from MinIO.
 
 | Open | Needs |
 |---|---|
-| Oracle-specific behaviour (REF CURSOR, PL/SQL OUT params, driver settings) | a dev Oracle database |
-| Operator **with S3 results** on a cluster; leader election with 2 replicas | minikube running again (`scripts/minikube-e2e.sh`) |
+| Oracle-specific behaviour (REF CURSOR, PL/SQL OUT params, driver settings) - distributed SQL on a real DB | a dev Oracle database (or the Oracle Free container) |
 | Grafana dashboard in a real Grafana + Prometheus | a Grafana/Prometheus instance |
 | CI examples (`docs/ci/`) in a real Jenkins / GitLab | the team's CI |
-| Pilot: a real JMeter / LoadRunner test converted to YAML | a `.jmx` / script from the team |
+| LoadRunner: a real team script through `perf convert-lr`, numbers compared with LoadRunner's | a VuGen script + a LoadRunner run of the same scenario |
+| First run on the production on-prem cluster | registry, storage choice (NFS RWX or MinIO), access |
 
 ---
 

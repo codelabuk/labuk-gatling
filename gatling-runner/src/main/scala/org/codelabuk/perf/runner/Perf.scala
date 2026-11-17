@@ -24,6 +24,8 @@ object Perf {
       |  perf setup    <plan.yaml> --out shared.json                        run only `setup`, save its shared lists
       |  perf worker   [options]                                            one worker of a distributed run (settings from env)
       |  perf report   --input <logs-dir> [--output <dir>] [--name <run>]   merge workers' logs -> one report + SLA verdict
+      |  perf fetch    <s3://bucket/folder> [<local dir>]                   download a report / logs from S3 or MinIO
+      |  perf convert-lr <VuGen script dir> [--out <dir>] [--iterations N]   LoadRunner web script -> YAML plan
       |  perf submit   <plan.yaml> --workers N ...                          start a distributed run on Kubernetes (perf submit --help)
       |  perf status   <run> [-n namespace] [--watch]                       follow it; with --watch exit 0 Passed, 2 SLAFailed, 1 Failed
       |
@@ -55,6 +57,8 @@ object Perf {
     case "setup" :: rest                    => setup(Args.parse(rest))
     case "worker" :: rest                   => worker(Args.parse(rest))
     case "report" :: rest                   => report(rest)
+    case "fetch" :: rest                    => fetch(rest)
+    case "convert-lr" :: rest               => convertLr(Args.parse(rest))
     case "submit" :: rest                   => Kube.submit(rest)
     case "status" :: rest                   => Kube.status(rest)
     case other :: _ =>
@@ -128,6 +132,45 @@ object Perf {
         Facts.write(f, Map("reportBuilt" -> built, "slaPassed" -> (code == 0), "exitCode" -> code, "report" -> reportPath))
         if (built) 0 else 1
     }
+  }
+
+  /** Downloads everything under an s3:// folder, keeping the folder structure (e.g. a report to open locally). */
+  private def fetch(rest: List[String]): Int = {
+    val a = Args.parse(rest)
+    val url = a.positional.headOption.filter(S3.isS3).getOrElse(return fail("usage: perf fetch <s3://bucket/folder> [<local dir>]"))
+    val (bucket, prefix) = S3.parse(url)
+    val target = Paths.get(a.positional.lift(1).getOrElse(prefix.split('/').filter(_.nonEmpty).lastOption.getOrElse(bucket)))
+    Try {
+      val s3 = S3.fromEnv()
+      val keys = s3.list(bucket, if (prefix.isEmpty) "" else prefix + "/")
+      keys.foreach(k => S3.download(s3, s"s3://$bucket/$k", target.resolve(k.stripPrefix(prefix).stripPrefix("/"))))
+      keys.size
+    }.fold(e => fail(s"perf fetch: ${e.getMessage}"), n =>
+      if (n == 0) fail(s"perf fetch: nothing under $url")
+      else {
+        println(s"downloaded $n file(s) to ${target.toAbsolutePath}")
+        Option(target.resolve("index.html")).filter(Files.exists(_)).foreach(i => println(s"open ${i.toAbsolutePath}"))
+        0
+      })
+  }
+
+  /** LoadRunner VuGen web script -> YAML plan + API catalog + CSV data + conversion report. */
+  private def convertLr(a: Args): Int = {
+    val script = Paths.get(a.positional.headOption.getOrElse(return fail("usage: perf convert-lr <VuGen script dir> [--out <dir>] [--iterations N]")))
+    if (!Files.exists(script)) return fail(s"perf convert-lr: not found: $script")
+    val name = (if (Files.isDirectory(script)) script.toAbsolutePath.normalize().getFileName.toString else "script").replaceAll("[^A-Za-z0-9_-]", "-")
+    val out = Paths.get(a.opt("--out").getOrElse(s"$name-perf"))
+    val iterations = a.opt("--iterations").flatMap(_.toIntOption).getOrElse(1)
+    Try(lr.VuGenConverter.convert(script, iterations)).fold(e => fail(s"perf convert-lr: ${e.getMessage}"), { r =>
+      val plan = lr.VuGenConverter.write(r, name, out)
+      println(s"converted ${r.requests} request(s) -> $plan")
+      if (r.report.nonEmpty) {
+        println(s"${r.report.size} note(s) - also in ${out.resolve(s"$name-conversion.txt")}:")
+        r.report.foreach(n => println(s"  - $n"))
+      }
+      println(s"next: set `load` in the plan, then  perf validate $plan  and  perf run $plan")
+      0
+    })
   }
 
   private def runPlan(a: Args): Int = {

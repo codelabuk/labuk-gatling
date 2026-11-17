@@ -38,6 +38,8 @@ perf run      plans/orders.yaml --scenario checkout --results D:/perf-results
 | `perf report --input <logs> [--output <dir>]` | Merges workers' logs → one report + SLA verdict |
 | `perf submit <plan> --workers N ...` | Starts a distributed run on Kubernetes (no LoadTest YAML to write) — see below |
 | `perf status <run> [-n ns] [--watch]` | Follows it; with `--watch` the exit code is the verdict |
+| `perf fetch <s3://folder> [<dir>]` | Downloads a report / logs from S3 or MinIO (keeps the folder structure) |
+| `perf convert-lr <VuGen script dir> [--out <dir>]` | Converts a LoadRunner web script to a YAML plan — see [LoadRunner scripts](#loadrunner-scripts-perf-convert-lr) |
 
 Options for `run` / `worker`: `--scenario a,b`, `--results <dir>`, `--workers N --worker-index i`,
 `--start-at <time>`, `--shared-in <file>`, `--no-reports`, `--description <text>`, `--metrics-port <port>`,
@@ -602,6 +604,10 @@ contexts (non-root, read-only root filesystem by default). Helm installs the CRD
 upgrades it — after an upgrade that changes the CRD run `kubectl apply -f charts/loadtest-operator/crds/`.
 Plain manifests (no Helm) are in `loadtest-operator/deploy/operator.yaml`.
 
+**End-to-end test on Docker Desktop's Kubernetes** (results in the cluster's MinIO): `bash scripts/docker-desktop-e2e.sh`
+— operator with 2 replicas (leader election), a 3-worker run, `perf status --watch`, then `perf fetch` of the
+report. Verified: Completed / Passed, one operator replica held the Lease and created all Jobs.
+
 **End-to-end test on minikube:** `bash scripts/minikube-e2e.sh` builds the three images (runner, operator,
 mock API) with `docker build`, loads them into minikube, installs the operator with Helm, runs a 2-worker
 LoadTest against the in-cluster mock and copies the merged report to `loadtest-operator/target/e2e/`.
@@ -635,6 +641,8 @@ export PERF_IMAGE=registry.example.com/labuk-perf-runner:1.0.0 PERF_PVC=perf-res
 perf submit plans/orders-peak.yaml --workers 5 --git-repo https://git.example.com/qa/perf-tests.git \
      --git-ref main --env BASE_URL=https://sit.api.example.com --secret perf-secrets --memory 4Gi
 perf submit plans/sr.yaml --from-dir ./perf-tests --workers 2      # local folder -> ConfigMap (flat, 1 MB)
+perf submit ... --s3 s3://perf-results/runs --s3-secret minio-creds --s3-endpoint http://minio.minio.svc:9000
+                                                                    # results in MinIO instead of --pvc
 perf submit ... --dry-run                                           # print the LoadTest instead
 perf status orders-peak-20261120-100000 --watch                     # exit 0 Passed, 2 SLAFailed, 1 Failed
 ```
@@ -661,6 +669,35 @@ for every run — a finished one is never re-run.
 
 The operator uses leader election (a Lease in its namespace), so `replicaCount: 2` gives a standby. To run it
 from a laptop against a cluster during development: `KUBE_CONTEXT=<context> java -cp ... OperatorMain`.
+
+---
+
+## LoadRunner scripts (`perf convert-lr`)
+
+```bash
+perf convert-lr path/to/VuGenScript --out perf-tests/sr-flow     # [--iterations N]
+```
+
+Reads `vuser_init.c`, `Action*.c`, `vuser_end.c` and the `.prm` / `.dat` parameter files and writes a YAML plan,
+an API catalog, the CSV data and `<script>-conversion.txt` — **everything not converted is listed there with
+file and line, never silently dropped.** Then set `load` (a VuGen script has none — it lives in the Controller
+scenario), `perf validate` and run it like any plan.
+
+| VuGen | YAML |
+|---|---|
+| `web_url`, `web_custom_request`, `web_submit_data` | API catalog + `api` steps (method, URL, JSON / raw / form body); the most used host becomes `baseUrl` |
+| `web_reg_save_param` (LB/RB, `Ord=ALL`), `_ex`, `_json`, `_regexp` | `extract` on the next request (regex / jsonPath / `all: true`) |
+| `web_reg_find("Text=...")`, `Fail=Found` | `bodyContains` check / `notExists` |
+| `web_add_header`, `web_add_auto_header`, `web_revert_auto_header` | headers on the next / all following requests |
+| `lr_start_transaction` / `lr_end_transaction` (nested) | `transaction` blocks |
+| `lr_think_time`, `lr_rendezvous`, `lr_save_string`, `lr_output_message` | `wait`, `rendezvous` (placeholder 1 - set it), `set`, `log` |
+| `{Param}` from `.prm` File/Table parameters | `#{column}` + CSV data source (Sequential → circular, Random → random, Unique → queue) |
+| `vuser_init` / `Action` / `vuser_end` | steps once / in `repeat` (`--iterations`) / once |
+| `if` / `for`, `lr_eval_string`, `web_link`, other parameter types, unknown calls | listed in the report |
+
+Verified with a recorded-style script (`gatling-runner/src/test/resources/lr/SR_Flow`): the converted plan runs
+in Gatling with every request and transaction OK, and ran distributed on Kubernetes (3 workers, Passed).
+It is not a comparison against LoadRunner's own numbers - for that, run the same scenario in both tools.
 
 ---
 

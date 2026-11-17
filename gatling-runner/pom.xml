@@ -30,6 +30,14 @@
             <artifactId>gatling-sql</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- the core's mock API, to run converted LoadRunner scripts in tests -->
+        <dependency>
+            <groupId>org.codelabuk</groupId>
+            <artifactId>gatling-api-core</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.scalatest</groupId>
             <artifactId>scalatest_${scala.binary.version}</artifactId>
@@ -78,6 +86,8 @@
                 <configuration>
                     <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>
                     <junitxml>.</junitxml>
+                    <!-- VuGenSpec runs real Gatling in the test JVM -->
+                    <argLine>--add-opens=java.base/java.lang=ALL-UNNAMED</argLine>
                 </configuration>
                 <executions>
                     <execution>
