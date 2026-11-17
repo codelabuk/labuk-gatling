@@ -1,0 +1,65 @@
+// Example pipeline for a perf-tests repository (YAML plans only).
+// Needs: a Jenkins agent with Java 17 and kubectl; the perf distribution zip published by the framework build.
+//   every change : validate all plans (no traffic)
+//   main / manual: small smoke run on the agent      - exit code 2 (SLAs failed) fails the build
+//   nightly      : distributed run on Kubernetes     - `perf status --watch` exit code is the verdict
+pipeline {
+  agent { label 'java17' }
+  parameters {
+    booleanParam(name: 'DISTRIBUTED', defaultValue: false, description: 'Run the nightly distributed test now')
+  }
+  triggers { cron('H 2 * * *') }   // nightly
+  environment {
+    PERF_VERSION     = '1.0-SNAPSHOT'
+    PERF_HOME        = "${WORKSPACE}/.perf/perf-${PERF_VERSION}"
+    PERF_IMAGE       = "registry.example.com/perf/labuk-perf-runner:${PERF_VERSION}"
+    PERF_NAMESPACE   = 'perf'
+    PERF_PVC         = 'perf-results'
+  }
+  stages {
+    stage('Get perf') {
+      steps {
+        sh '''
+          mkdir -p .perf
+          curl -fsSL -o .perf/perf.zip "https://artifacts.example.com/perf/perf-${PERF_VERSION}.zip"
+          unzip -qo .perf/perf.zip -d .perf
+        '''
+      }
+    }
+    stage('Validate plans') {
+      steps {
+        sh '''
+          set -e
+          for plan in plans/*.yaml; do
+            echo "== $plan"
+            "$PERF_HOME/bin/perf" validate "$plan" --workers 5
+          done
+        '''
+      }
+    }
+    stage('Smoke run') {
+      when { anyOf { branch 'main'; triggeredBy 'UserIdCause' } }
+      steps {
+        withCredentials([string(credentialsId: 'perf-sit-password', variable: 'DB_PASSWORD')]) {
+          sh '"$PERF_HOME/bin/perf" run plans/smoke.yaml -DBASE_URL=https://sit.api.example.com --results results'
+        }
+      }
+      post { always { archiveArtifacts artifacts: 'results/**', allowEmptyArchive: true } }
+    }
+    stage('Distributed (nightly)') {
+      when { anyOf { triggeredBy 'TimerTrigger'; expression { params.DISTRIBUTED } } }
+      steps {
+        withKubeConfig([credentialsId: 'perf-cluster-kubeconfig']) {
+          sh '''
+            set -e
+            RUN="orders-peak-${BUILD_NUMBER}"
+            "$PERF_HOME/bin/perf" submit plans/orders-peak.yaml --name "$RUN" --workers 10 \
+              --git-repo "$GIT_URL" --git-ref "$GIT_COMMIT" --git-token-secret git-creds \
+              --env BASE_URL=https://sit.api.example.com --secret perf-secrets --memory 4Gi --metrics
+            "$PERF_HOME/bin/perf" status "$RUN" --watch      # 0 Passed, 2 SLAs failed, 1 failed
+          '''
+        }
+      }
+    }
+  }
+}

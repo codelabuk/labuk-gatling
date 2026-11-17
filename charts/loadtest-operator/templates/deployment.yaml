@@ -5,9 +5,8 @@ metadata:
   labels:
     {{- include "loadtest-operator.labels" . | nindent 4 }}
 spec:
-  replicas: 1                    # keeps no state outside LoadTest.status; a second replica would duplicate work
-  strategy:
-    type: Recreate
+  # more than one replica is safe: leader election (a Lease) makes only one of them work at a time
+  replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
       {{- include "loadtest-operator.selectorLabels" . | nindent 6 }}
@@ -37,6 +36,11 @@ spec:
           env:
             - name: LOG_LEVEL
               value: {{ .Values.logLevel | quote }}
+            # turns on leader election (Lease in this namespace)
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             # the JVM needs a writable temp dir; the root filesystem is read-only
             - name: JAVA_TOOL_OPTIONS
               value: "-Djava.io.tmpdir=/tmp"

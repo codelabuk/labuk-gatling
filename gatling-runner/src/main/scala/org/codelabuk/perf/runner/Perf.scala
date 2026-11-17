@@ -86,23 +86,47 @@ object Perf {
    */
   private def report(rest: List[String]): Int = {
     val a = Args.parse(rest)
-    a.opt("--facts-file") match {
-      case None => Merge.run(rest)
-      case Some(f) =>
-        val name = a.opt("--name").getOrElse("merged")
-        val withoutFacts = rest.patch(rest.indexOf("--facts-file"), Nil, 2)
-        val code = Merge.run(if (a.has("--name")) withoutFacts else withoutFacts ++ List("--name", name))
-        val output = a.opt("--output").map(Paths.get(_)).getOrElse {
-          val in = Paths.get(a.opt("--input").getOrElse("."))
-          in.resolveSibling(in.getFileName.toString + "-merged")
+    val input = a.opt("--input").getOrElse(return fail("usage: perf report --input <logs dir | s3://...> [--output <dir | s3://...>] [--name <run>]"))
+    val name = a.opt("--name").getOrElse("merged")
+    val s3 = Try(if (S3.isS3(input) || a.opt("--output").exists(S3.isS3)) Some(S3.fromEnv()) else None)
+      .fold(e => return fail(s"perf report: ${e.getMessage}"), identity)
+
+    // s3:// input: download the workers' logs first
+    val localInput =
+      if (!S3.isS3(input)) input
+      else {
+        val dir = Files.createTempDirectory("perf-report-logs")
+        val n = Try(S3.downloadAll(s3.get, input, dir, ".log")).fold(e => return fail(s"perf report: ${e.getMessage}"), identity)
+        if (n == 0) return fail(s"perf report: no .log files under $input")
+        println(s"downloaded $n worker log(s) from $input")
+        dir.toString
+      }
+    // s3:// output: build locally, upload afterwards
+    val output = a.opt("--output")
+    val localOutput = output.map(o => if (S3.isS3(o)) Files.createTempDirectory("perf-report-out").toString else o)
+
+    val code = Merge.run(List("--input", localInput, "--name", name) ++ localOutput.toList.flatMap(o => List("--output", o)) ++
+      a.passThrough("--description") ++ (if (a.has("--no-report")) List("--no-report") else Nil))
+    val built = code == 0 || code == 2
+
+    val reportPath = output match {
+      case Some(o) if S3.isS3(o) =>
+        if (built) {
+          val n = Try(S3.uploadDir(s3.get, Paths.get(localOutput.get).resolve(name), s"$o/$name")).fold(e => return fail(s"perf report: ${e.getMessage}"), identity)
+          println(s"uploaded the report ($n files) to $o/$name/")
         }
-        Facts.write(f, Map(
-          "reportBuilt" -> (code == 0 || code == 2),
-          "slaPassed" -> (code == 0),
-          "exitCode" -> code,
-          "report" -> output.resolve(name).resolve("index.html").toString
-        ))
-        if (code == 0 || code == 2) 0 else 1
+        s"$o/$name/index.html"
+      case Some(o) => Paths.get(o).resolve(name).resolve("index.html").toString
+      case None =>
+        val in = Paths.get(localInput)
+        in.resolveSibling(in.getFileName.toString + "-merged").resolve(name).resolve("index.html").toString
+    }
+
+    a.opt("--facts-file") match {
+      case None => code
+      case Some(f) =>
+        Facts.write(f, Map("reportBuilt" -> built, "slaPassed" -> (code == 0), "exitCode" -> code, "report" -> reportPath))
+        if (built) 0 else 1
     }
   }
 
@@ -120,11 +144,15 @@ object Perf {
     val plan = a.positional.headOption.getOrElse(return fail("perf setup: which plan?"))
     val out = a.opt("--out").getOrElse(return fail("perf setup: --out <file> is required (where to save the shared lists)"))
     a.applyProps()
-    sys.props ++= Map("plan" -> plan, "mode" -> "setup", "shared.out" -> out)
+    val localOut = if (S3.isS3(out)) Files.createTempDirectory("perf-setup-out").resolve("shared.json").toString else out
+    sys.props ++= Map("plan" -> plan, "mode" -> "setup", "shared.out" -> localOut)
     if (!checkPlan(plan)) return 1
     val tmp = Files.createTempDirectory("perf-setup")
     val code = gatling(tmp, noReports = true, None)
-    if (code == 0) println(s"Shared lists saved to ${Paths.get(out).toAbsolutePath}")
+    if (code == 0) {
+      if (S3.isS3(out)) Try(S3.upload(S3.fromEnv(), Paths.get(localOut), out)).fold(e => return fail(s"perf setup: ${e.getMessage}"), identity)
+      println(s"Shared lists saved to ${if (S3.isS3(out)) out else Paths.get(out).toAbsolutePath}")
+    }
     code
   }
 
@@ -138,19 +166,34 @@ object Perf {
     val plan = a.positional.headOption.orElse(env("PLAN")).getOrElse(return fail("perf worker: set PLAN (or pass the plan path)"))
     a.applyProps()
     setPlanProps(plan, a)
-    if (!checkPlan(plan)) return 1
     val w = Worker.current
-    val results = Paths.get(a.opt("--results").orElse(env("RESULTS_DIR")).getOrElse("results"))
+    val results = a.opt("--results").orElse(env("RESULTS_DIR")).getOrElse("results")
+    val s3 = Try(if (S3.isS3(results) || RunOptions.setting("shared.in", "SHARED_IN").exists(S3.isS3)) Some(S3.fromEnv()) else None)
+      .fold(e => return fail(s"perf worker: ${e.getMessage}"), identity)
+    // shared lists from s3:// are fetched to local disk first
+    RunOptions.setting("shared.in", "SHARED_IN").filter(S3.isS3).foreach { url =>
+      val local = Files.createTempDirectory("perf-shared").resolve("shared.json")
+      Try(S3.download(s3.get, url, local)).fold(e => return fail(s"perf worker: ${e.getMessage}"), identity)
+      sys.props("shared.in") = local.toString
+    }
+    if (!checkPlan(plan)) return 1
     // Gatling's own output stays on local disk; only the final log goes to the (shared) results folder,
     // so `perf report` never sees partial or duplicate logs
     val runDir = Files.createTempDirectory(s"perf-worker-${w.index}-")
     val code = gatling(runDir, noReports = true, a.opt("--description"))
     val log = findLog(runDir)
     log.foreach { l =>
-      val target = results.resolve(s"worker-${w.index}.log")
-      Files.createDirectories(results)
-      Files.copy(l, target, StandardCopyOption.REPLACE_EXISTING)
-      println(s"Worker ${w.index + 1}/${w.count}: results in $target")
+      if (S3.isS3(results)) {
+        val target = s"${results.stripSuffix("/")}/worker-${w.index}.log"
+        Try(S3.upload(s3.get, l, target)).fold(e => return fail(s"perf worker: ${e.getMessage}"), identity)
+        println(s"Worker ${w.index + 1}/${w.count}: results in $target")
+      } else {
+        val dir = Paths.get(results)
+        val target = dir.resolve(s"worker-${w.index}.log")
+        Files.createDirectories(dir)
+        Files.copy(l, target, StandardCopyOption.REPLACE_EXISTING)
+        println(s"Worker ${w.index + 1}/${w.count}: results in $target")
+      }
     }
     code match {
       case 2 => println("NOTE: this worker's SLA check covers its share only - `perf report` decides."); 0

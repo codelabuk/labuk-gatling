@@ -42,10 +42,16 @@ public final class JobFactory {
         return base + "-" + role.name();
     }
 
-    /** Run folder on the results volume: unique per LoadTest, readable by people. */
+    /** Run folder on the results volume or under the S3 prefix: unique per LoadTest, readable by people. */
     public static String runDir(LoadTest lt) {
         String uid = lt.getMetadata().getUid() == null ? "local" : lt.getMetadata().getUid().replace("-", "");
-        return RESULTS + "/" + lt.getMetadata().getName() + "-" + uid.substring(0, Math.min(8, uid.length()));
+        String folder = lt.getMetadata().getName() + "-" + uid.substring(0, Math.min(8, uid.length()));
+        LoadTestSpec.Results r = lt.getSpec().results;
+        return (usesS3(lt.getSpec()) ? r.s3.url.replaceAll("/+$", "") : RESULTS) + "/" + folder;
+    }
+
+    static boolean usesS3(LoadTestSpec spec) {
+        return spec.results != null && spec.results.s3 != null;
     }
 
     public static String planPath(LoadTestSpec spec) {
@@ -61,7 +67,13 @@ public final class JobFactory {
         if (sources != 1) return "spec.plan needs exactly one of: git, configMap, inImage";
         if (spec.plan.inImage && !spec.plan.file.startsWith("/")) return "spec.plan.file must be an absolute path when inImage is true";
         if (spec.workers < 1) return "spec.workers must be at least 1";
-        if (spec.results == null || spec.results.pvc == null || spec.results.pvc.isBlank()) return "spec.results.pvc is required";
+        boolean pvc = spec.results != null && spec.results.pvc != null && !spec.results.pvc.isBlank();
+        if (pvc == usesS3(spec)) return "spec.results needs exactly one of: pvc, s3";
+        if (usesS3(spec)) {
+            if (spec.results.s3.url == null || !spec.results.s3.url.startsWith("s3://")) return "spec.results.s3.url must look like s3://bucket/prefix";
+            if (spec.results.s3.credentialsSecret == null || spec.results.s3.credentialsSecret.isBlank())
+                return "spec.results.s3.credentialsSecret is required (a Secret with AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY)";
+        }
         return null;
     }
 
@@ -133,11 +145,19 @@ public final class JobFactory {
         extraEnv.forEach((k, v) -> env.add(new EnvVarBuilder().withName(k).withValue(v).build()));
         List<EnvFromSource> envFrom = new ArrayList<>();
         spec.secretRefs.forEach(s -> envFrom.add(new EnvFromSourceBuilder().withNewSecretRef().withName(s).endSecretRef().build()));
+        if (usesS3(spec)) {
+            LoadTestSpec.S3Results s3 = spec.results.s3;
+            envFrom.add(new EnvFromSourceBuilder().withNewSecretRef().withName(s3.credentialsSecret).endSecretRef().build());
+            env.add(new EnvVarBuilder().withName("AWS_REGION").withValue(s3.region).build());
+            if (s3.endpoint != null && !s3.endpoint.isBlank()) env.add(new EnvVarBuilder().withName("S3_ENDPOINT").withValue(s3.endpoint).build());
+        }
 
         List<Volume> volumes = new ArrayList<>();
         List<VolumeMount> mounts = new ArrayList<>();
-        volumes.add(new VolumeBuilder().withName("results").withNewPersistentVolumeClaim().withClaimName(spec.results.pvc).endPersistentVolumeClaim().build());
-        mounts.add(new VolumeMountBuilder().withName("results").withMountPath(RESULTS).build());
+        if (!usesS3(spec)) { // with S3 every pod reads and writes the bucket directly - no shared volume
+            volumes.add(new VolumeBuilder().withName("results").withNewPersistentVolumeClaim().withClaimName(spec.results.pvc).endPersistentVolumeClaim().build());
+            mounts.add(new VolumeMountBuilder().withName("results").withMountPath(RESULTS).build());
+        }
         List<Container> init = new ArrayList<>();
         if (spec.plan.git != null) {
             volumes.add(new VolumeBuilder().withName("tests").withNewEmptyDir().endEmptyDir().build());
@@ -197,9 +217,12 @@ public final class JobFactory {
             env.add(new EnvVarBuilder().withName("GIT_TOKEN").withNewValueFrom().withNewSecretKeyRef()
                     .withName(git.tokenSecret.name).withKey(git.tokenSecret.key).endSecretKeyRef().endValueFrom().build());
         // the token is passed via env, never written into the spec or logs
+        // fetch by ref so GIT_REF can be a branch, a tag or a commit SHA (pinning a run to an exact commit)
         String script = "set -e; URL=\"$GIT_REPO\"; "
                 + "if [ -n \"$GIT_TOKEN\" ]; then URL=$(echo \"$GIT_REPO\" | sed \"s#https://#https://oauth2:${GIT_TOKEN}@#\"); fi; "
-                + "git clone --quiet --depth 1 --branch \"$GIT_REF\" \"$URL\" " + TESTS + "; echo \"cloned $GIT_REPO@$GIT_REF\"";
+                + "cd " + TESTS + "; git init --quiet; git remote add origin \"$URL\"; "
+                + "git fetch --quiet --depth 1 origin \"$GIT_REF\"; git checkout --quiet FETCH_HEAD; "
+                + "echo \"tests at $GIT_REPO@$GIT_REF ($(git rev-parse --short HEAD))\"";
         return new ContainerBuilder()
                 .withName("clone-tests")
                 .withImage(git.image)

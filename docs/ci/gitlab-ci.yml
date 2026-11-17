@@ -1,0 +1,50 @@
+# Example .gitlab-ci.yml for a perf-tests repository (YAML plans only).
+#   every change : validate all plans (no traffic)
+#   main         : small smoke run in the job          - exit code 2 (SLAs failed) fails the job
+#   schedule     : distributed run on Kubernetes       - `perf status --watch` exit code is the verdict
+# Variables to define in the project: PERF_SIT_PASSWORD (masked), KUBECONFIG_FILE (file variable).
+variables:
+  PERF_VERSION: "1.0-SNAPSHOT"
+  PERF_IMAGE: "registry.example.com/perf/labuk-perf-runner:1.0-SNAPSHOT"
+  PERF_NAMESPACE: "perf"
+  PERF_PVC: "perf-results"
+
+# the perf runner image already contains `perf` (entrypoint reset so the job can run shell commands)
+.perf:
+  image:
+    name: $PERF_IMAGE
+    entrypoint: [""]
+  before_script:
+    # a function, not an alias: non-interactive shells ignore aliases
+    - perf() { java --add-opens=java.base/java.lang=ALL-UNNAMED -XX:MaxRAMPercentage=75 -Dlogback.configurationFile=/opt/perf/conf/logback.xml -cp "/opt/perf/lib/*:/opt/perf/drivers/*" org.codelabuk.perf.runner.Perf "$@"; }
+
+validate:
+  extends: .perf
+  script:
+    - for plan in plans/*.yaml; do echo "== $plan"; perf validate "$plan" --workers 5 || exit 1; done
+
+smoke:
+  extends: .perf
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+  script:
+    - perf run plans/smoke.yaml -DBASE_URL=https://sit.api.example.com -DDB_PASSWORD="$PERF_SIT_PASSWORD" --results results
+  artifacts:
+    when: always
+    paths: [ results/ ]
+
+distributed:
+  # needs perf (from the runner image) and kubectl
+  extends: .perf
+  image:
+    name: registry.example.com/perf/perf-ci:1.0     # your runner image + kubectl
+    entrypoint: [""]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  script:
+    - export KUBECONFIG="$KUBECONFIG_FILE"
+    - RUN="orders-peak-$CI_PIPELINE_IID"
+    - perf submit plans/orders-peak.yaml --name "$RUN" --workers 10
+        --git-repo "$CI_REPOSITORY_URL" --git-ref "$CI_COMMIT_SHA" --git-token-secret git-creds
+        --env BASE_URL=https://sit.api.example.com --secret perf-secrets --memory 4Gi --metrics
+    - perf status "$RUN" --watch     # 0 Passed, 2 SLAs failed, 1 failed

@@ -13,7 +13,36 @@ spec:
     singular: "loadtest"
   scope: "Namespaced"
   versions:
-  - name: "v1alpha1"
+  - additionalPrinterColumns:
+    - jsonPath: ".metadata.creationTimestamp"
+      name: "Age"
+      priority: 0
+      type: "date"
+    - jsonPath: ".spec.workers"
+      name: "Workers"
+      priority: 0
+      type: "integer"
+    - jsonPath: ".status.message"
+      name: "Message"
+      priority: 1
+      type: "string"
+    - jsonPath: ".status.phase"
+      name: "Phase"
+      priority: 0
+      type: "string"
+    - jsonPath: ".status.result"
+      name: "Result"
+      priority: 0
+      type: "string"
+    - jsonPath: ".status.workersFailed"
+      name: "Failed"
+      priority: 1
+      type: "integer"
+    - jsonPath: ".status.workersSucceeded"
+      name: "Done"
+      priority: 0
+      type: "integer"
+    name: "v1alpha1"
     schema:
       openAPIV3Schema:
         properties:
@@ -124,8 +153,27 @@ spec:
                     description: "Existing PersistentVolumeClaim shared by all pods\
                       \ of the run (ReadWriteMany on multi-node clusters)"
                     type: "string"
-                required:
-                - "pvc"
+                  s3:
+                    description: "S3 or MinIO bucket instead of a volume - no shared\
+                      \ storage needed"
+                    properties:
+                      credentialsSecret:
+                        description: "Secret with AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY"
+                        type: "string"
+                      endpoint:
+                        description: "e.g. http://minio.perf:9000 for MinIO; leave\
+                          \ empty for AWS S3"
+                        type: "string"
+                      region:
+                        type: "string"
+                      url:
+                        description: "s3://bucket/prefix - each run gets a folder\
+                          \ below it"
+                        type: "string"
+                    required:
+                    - "credentialsSecret"
+                    - "url"
+                    type: "object"
                 type: "object"
               scenarios:
                 description: "Run only these scenarios of the plan (default: all)"

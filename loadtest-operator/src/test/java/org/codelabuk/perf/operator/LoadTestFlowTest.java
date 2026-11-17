@@ -200,6 +200,32 @@ class LoadTestFlowTest {
     }
 
     @Test
+    void s3ResultsNeedNoVolume() {
+        LoadTest lt = loadTest("to-s3");
+        lt.getSpec().results.pvc = null;
+        lt.getSpec().results.s3 = new LoadTestSpec.S3Results();
+        lt.getSpec().results.s3.url = "s3://perf-results/runs/";
+        lt.getSpec().results.s3.endpoint = "http://minio.perf:9000";
+        lt.getSpec().results.s3.credentialsSecret = "minio-creds";
+        assertNull(JobFactory.specProblem(lt.getSpec()));
+        String runDir = JobFactory.runDir(lt);
+        assertEquals("s3://perf-results/runs/to-s3-1a2b3c4d", runDir);
+        Job workers = JobFactory.workers(lt, runDir, "2026-11-20T10:01:00Z", true);
+        var pod = workers.getSpec().getTemplate().getSpec();
+        Container perf = pod.getContainers().get(0);
+        assertEquals("s3://perf-results/runs/to-s3-1a2b3c4d/logs", env(perf).get("RESULTS_DIR"));
+        assertEquals("s3://perf-results/runs/to-s3-1a2b3c4d/shared.json", env(perf).get("SHARED_IN"));
+        assertEquals("http://minio.perf:9000", env(perf).get("S3_ENDPOINT"));
+        assertTrue(perf.getEnvFrom().stream().anyMatch(e -> "minio-creds".equals(e.getSecretRef().getName())));
+        assertTrue(pod.getVolumes().stream().noneMatch(v -> v.getPersistentVolumeClaim() != null));
+        assertEquals(List.of("report", "--input", runDir + "/logs", "--output", runDir + "/report", "--name", "merged",
+                "--facts-file", "/dev/termination-log"), JobFactory.report(lt, runDir).getSpec().getTemplate().getSpec().getContainers().get(0).getArgs());
+        // both or neither is an error
+        lt.getSpec().results.pvc = "x";
+        assertEquals("spec.results needs exactly one of: pvc, s3", JobFactory.specProblem(lt.getSpec()));
+    }
+
+    @Test
     void badSpecFailsBeforeCreatingAnything() {
         LoadTest lt = loadTest("no-source");
         lt.getSpec().plan.git = null;

@@ -20,7 +20,9 @@ rbac:
   # ClusterRole + ClusterRoleBinding so the operator can run LoadTests in any namespace
   create: true
 
-# The operator keeps no state outside LoadTest.status; one replica is all it needs.
+# 1 is enough; 2 gives a standby (leader election makes only one replica work at a time).
+replicaCount: 1
+
 resources:
   requests:
     cpu: 100m

@@ -27,7 +27,7 @@ class ManifestsTest {
     void operatorManifestParses() throws Exception {
         List<String> kinds = docs("operator.yaml").stream()
                 .map(d -> Serialization.unmarshal(d, GenericKubernetesResource.class).getKind()).toList();
-        assertEquals(List.of("Namespace", "ServiceAccount", "ClusterRole", "ClusterRoleBinding", "Deployment"), kinds);
+        assertEquals(List.of("Namespace", "ServiceAccount", "ClusterRole", "ClusterRoleBinding", "Role", "RoleBinding", "Deployment"), kinds);
     }
 
     @Test

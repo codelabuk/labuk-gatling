@@ -36,3 +36,5 @@ build/
 
 ### Mac OS ###
 .DS_Store
+# written by the Derby test database on every test run
+derby.log

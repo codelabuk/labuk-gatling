@@ -36,24 +36,36 @@ perf run      plans/orders.yaml --scenario checkout --results D:/perf-results
 | `perf setup <plan> --out shared.json` | Runs only `setup` and saves its shared lists (distributed runs) |
 | `perf worker` | One worker of a distributed run; settings from env (`PLAN`, `WORKER_INDEX`/`JOB_COMPLETION_INDEX`, `WORKER_COUNT`, `START_AT`, `SHARED_IN`, `RESULTS_DIR`); writes `worker-<i>.log` |
 | `perf report --input <logs> [--output <dir>]` | Merges workers' logs → one report + SLA verdict |
+| `perf submit <plan> --workers N ...` | Starts a distributed run on Kubernetes (no LoadTest YAML to write) — see below |
+| `perf status <run> [-n ns] [--watch]` | Follows it; with `--watch` the exit code is the verdict |
 
 Options for `run` / `worker`: `--scenario a,b`, `--results <dir>`, `--workers N --worker-index i`,
-`--start-at <time>`, `--shared-in <file>`, `--no-reports`, `--description <text>`, `-DNAME=value`.
-Environment: `PERF_HEAP` (default `2g`), `PERF_JAVA_OPTS`, `JAVA_HOME`.
-**Exit codes:** `0` OK · `1` error or invalid plan · `2` SLAs failed — use them in CI.
+`--start-at <time>`, `--shared-in <file>`, `--no-reports`, `--description <text>`, `--metrics-port <port>`,
+`-DNAME=value`. Environment: `PERF_HEAP` (default `2g`), `PERF_JAVA_OPTS`, `JAVA_HOME`.
+**Exit codes:** `0` OK · `1` error or invalid plan · `2` SLAs failed — use them in CI
+(examples: `docs/ci/Jenkinsfile`, `docs/ci/gitlab-ci.yml`).
+
+**Results in S3 / MinIO** — every path option also takes `s3://bucket/prefix/...`:
+`perf setup --out s3://.../shared.json`, `SHARED_IN=s3://...`, `RESULTS_DIR=s3://.../logs`,
+`perf report --input s3://.../logs --output s3://.../report`. Credentials and endpoint come from the standard
+variables `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (`AWS_SESSION_TOKEN`), `AWS_REGION`, and `S3_ENDPOINT`
+for MinIO (e.g. `http://minio.perf:9000`). Built-in client (no AWS SDK): access keys only — EKS IRSA /
+web-identity roles are not supported.
 
 The zip contains `bin/` (launchers), `lib/` (engine, Gatling, SQL support, Oracle + PostgreSQL drivers),
 `drivers/` (drop extra JDBC jars here) and `conf/logback.xml` (logging).
 
-**Docker image** (configured, built with Jib — no Docker daemon needed to build):
+**Docker image** — plain `docker build` (verified) or Jib (no Docker daemon needed, good for pushing from CI):
 ```bash
-mvn -pl gatling-runner -am package jib:dockerBuild                               # into local Docker
-mvn -pl gatling-runner -am package jib:build -Dimage=<registry>/labuk-perf-runner  # push to a registry
+mvn -pl gatling-runner -am package
+docker build -t labuk-perf-runner:1.0-SNAPSHOT gatling-runner                     # Dockerfile path
+mvn -pl gatling-runner jib:build -Dimage=<registry>/labuk-perf-runner              # or Jib, straight to a registry
 docker run --rm -v "$PWD/perf-tests:/tests" labuk-perf-runner:1.0-SNAPSHOT run /tests/plans/orders.yaml
 ```
 The image runs as a non-root user, sizes its heap from the container memory limit (75%), reads extra
 drivers from `/opt/perf/drivers/`, and writes worker results to `RESULTS_DIR` (default `/tmp/results` —
-mount a volume there).
+mount a volume there, or use `s3://`). (On the dev laptop Jib's hand-off to Docker Desktop stalled, so the
+Dockerfiles are the tested local path.)
 
 **Live metrics** — `perf run plans/x.yaml --metrics-port 9464` (or `METRICS_PORT`; with Maven
 `-Dmetrics.port=9464`) serves Prometheus metrics on `http://<host>:9464/metrics` while the test runs:
@@ -591,8 +603,9 @@ upgrades it — after an upgrade that changes the CRD run `kubectl apply -f char
 Plain manifests (no Helm) are in `loadtest-operator/deploy/operator.yaml`.
 
 **End-to-end test on minikube:** `bash scripts/minikube-e2e.sh` builds the three images (runner, operator,
-mock API), installs the operator with Helm, runs a 2-worker LoadTest against the in-cluster mock and copies
-the merged report to `loadtest-operator/target/e2e/`. It only uses `--context minikube`.
+mock API) with `docker build`, loads them into minikube, installs the operator with Helm, runs a 2-worker
+LoadTest against the in-cluster mock and copies the merged report to `loadtest-operator/target/e2e/`.
+It only uses `--context minikube`. Verified: Validating → Setup → Running → Aggregating → Completed (Passed).
 
 Then each test run is one resource (full example: `loadtest-operator/deploy/example-loadtest.yaml`):
 
@@ -610,10 +623,24 @@ spec:
   secretRefs: [ perf-secrets ]                 # passwords/tokens as ${...} values
   resources: { limits: { cpu: "2", memory: 4Gi } }
   results: { pvc: perf-results }               # existing claim; ReadWriteMany on multi-node clusters
+  # or, no shared volume needed:
+  # results: { s3: { url: s3://perf-results/runs, endpoint: http://minio.perf:9000, credentialsSecret: minio-creds } }
+  # metrics: { enabled: true }                 # live Prometheus metrics + scrape annotations on workers
+```
+
+Or let `perf` write it — testers only need `kubectl` access:
+
+```bash
+export PERF_IMAGE=registry.example.com/labuk-perf-runner:1.0.0 PERF_PVC=perf-results PERF_NAMESPACE=perf
+perf submit plans/orders-peak.yaml --workers 5 --git-repo https://git.example.com/qa/perf-tests.git \
+     --git-ref main --env BASE_URL=https://sit.api.example.com --secret perf-secrets --memory 4Gi
+perf submit plans/sr.yaml --from-dir ./perf-tests --workers 2      # local folder -> ConfigMap (flat, 1 MB)
+perf submit ... --dry-run                                           # print the LoadTest instead
+perf status orders-peak-20261120-100000 --watch                     # exit 0 Passed, 2 SLAFailed, 1 Failed
 ```
 
 ```bash
-kubectl get loadtests -n perf -w           # phase: Validating, Setup, Running, Aggregating, Completed / Failed
+kubectl get loadtests -n perf -w     # NAME  PHASE  RESULT  WORKERS  DONE  AGE   (-o wide adds FAILED, MESSAGE)
 kubectl get lt orders-peak-0412 -n perf -o jsonpath='{.status.result} {.status.reportPath} {.status.message}'
 ```
 
@@ -626,10 +653,14 @@ What happens:
 | Running | `<name>-workers` — an Indexed Job with N pods | All start at `status.startAt` (now + `startDelaySeconds`); no retries, a crashed worker fails the run |
 | Aggregating | `<name>-report` runs `perf report` | Merged report on the results volume; `status.result` = `Passed` / `SLAFailed` |
 
-Tests come from **Git** (cloned by an init container, token from a Secret), a **ConfigMap** (small flat test
-sets, 1 MB limit) or **the image** (`inImage: true`, absolute `file`). Pods run as non-root; Jobs are owned
-by the LoadTest (deleting it deletes them) and are cleaned up `ttlSecondsAfterFinished` after finishing.
-Create a new LoadTest (new name) for every run — a finished one is never re-run.
+Tests come from **Git** (fetched by an init container; `ref` may be a branch, tag or **commit SHA** to pin a
+run to an exact version; token from a Secret), a **ConfigMap** (small flat test sets, 1 MB limit) or **the
+image** (`inImage: true`, absolute `file`). Pods run as non-root; Jobs are owned by the LoadTest (deleting it
+deletes them) and are cleaned up `ttlSecondsAfterFinished` after finishing. Create a new LoadTest (new name)
+for every run — a finished one is never re-run.
+
+The operator uses leader election (a Lease in its namespace), so `replicaCount: 2` gives a standby. To run it
+from a laptop against a cluster during development: `KUBE_CONTEXT=<context> java -cp ... OperatorMain`.
 
 ---
 

@@ -104,9 +104,27 @@ public class LoadTestSpec {
         public String key = "token";
     }
 
+    /** Exactly one of pvc / s3. */
     public static class Results {
-        @Required
         @JsonPropertyDescription("Existing PersistentVolumeClaim shared by all pods of the run (ReadWriteMany on multi-node clusters)")
         public String pvc;
+
+        @JsonPropertyDescription("S3 or MinIO bucket instead of a volume - no shared storage needed")
+        public S3Results s3;
+    }
+
+    public static class S3Results {
+        @Required
+        @JsonPropertyDescription("s3://bucket/prefix - each run gets a folder below it")
+        public String url;
+
+        @JsonPropertyDescription("e.g. http://minio.perf:9000 for MinIO; leave empty for AWS S3")
+        public String endpoint;
+
+        public String region = "us-east-1";
+
+        @Required
+        @JsonPropertyDescription("Secret with AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
+        public String credentialsSecret;
     }
 }

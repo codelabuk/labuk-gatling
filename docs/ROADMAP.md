@@ -10,11 +10,24 @@ gatling-api-core ──► gatling-sql ──┐
 
 | # | Module | Status | Size |
 |---|---|---|---|
-| 1 | `gatling-api-core` v1.1 — hardening | H1–H5 done; extra step e2e tests open | S–M |
-| 2 | `gatling-sql` | v1 done (verified on Derby; Oracle not yet tried on a real DB) | M |
-| 3 | `gatling-runner` | v1 done (Docker image configured, not yet built) | M |
-| 4 | `loadtest-operator` | v1 done — **verified on a real cluster** (minikube, Helm-installed) | L |
-| 5 | Platform — live metrics, result storage | planned | S–M |
+| 1 | `gatling-api-core` v1.1 — hardening | ✅ done, incl. end-to-end test of every step type (`FeatureRunSpec`) | S–M |
+| 2 | `gatling-sql` | ✅ done incl. `batch` (verified on Derby; Oracle not yet tried on a real DB) | M |
+| 3 | `gatling-runner` | ✅ done: `perf` incl. `submit`/`status`, `s3://` results (verified on MinIO), Dockerfile image (verified) | M |
+| 4 | `loadtest-operator` | ✅ done — **verified on a real cluster** (minikube, Helm-installed); S3 results, printer columns, leader election added after | L |
+| 5 | Platform — live metrics, result storage | ✅ live metrics + Grafana dashboard; S3/MinIO results | S–M |
+
+### Status — 2026-11-17: all planned code is written
+
+65 tests (core 37, SQL 7, runner 10, operator 11). Open items are verifications that need something not
+available on the dev laptop:
+
+| Open | Needs |
+|---|---|
+| Oracle-specific behaviour (REF CURSOR, PL/SQL OUT params, driver settings) | a dev Oracle database |
+| Operator **with S3 results** on a cluster; leader election with 2 replicas | minikube running again (`scripts/minikube-e2e.sh`) |
+| Grafana dashboard in a real Grafana + Prometheus | a Grafana/Prometheus instance |
+| CI examples (`docs/ci/`) in a real Jenkins / GitLab | the team's CI |
+| Pilot: a real JMeter / LoadRunner test converted to YAML | a `.jmx` / script from the team |
 
 ---
 

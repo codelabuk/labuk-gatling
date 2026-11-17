@@ -1,5 +1,6 @@
 package org.codelabuk.perf.operator;
 
+import io.fabric8.crd.generator.annotation.AdditionalPrinterColumn;
 import io.fabric8.kubernetes.api.model.Namespaced;
 import io.fabric8.kubernetes.client.CustomResource;
 import io.fabric8.kubernetes.model.annotation.Group;
@@ -23,5 +24,13 @@ import io.fabric8.kubernetes.model.annotation.Version;
 @Group("perf.codelabuk.org")
 @Version("v1alpha1")
 @ShortNames("lt")
+// columns for `kubectl get loadtests`
+@AdditionalPrinterColumn(name = "Phase", jsonPath = ".status.phase", type = AdditionalPrinterColumn.Type.STRING)
+@AdditionalPrinterColumn(name = "Result", jsonPath = ".status.result", type = AdditionalPrinterColumn.Type.STRING)
+@AdditionalPrinterColumn(name = "Workers", jsonPath = ".spec.workers", type = AdditionalPrinterColumn.Type.INTEGER)
+@AdditionalPrinterColumn(name = "Done", jsonPath = ".status.workersSucceeded", type = AdditionalPrinterColumn.Type.INTEGER)
+@AdditionalPrinterColumn(name = "Failed", jsonPath = ".status.workersFailed", type = AdditionalPrinterColumn.Type.INTEGER, priority = 1)
+@AdditionalPrinterColumn(name = "Message", jsonPath = ".status.message", type = AdditionalPrinterColumn.Type.STRING, priority = 1)
+@AdditionalPrinterColumn(name = "Age", jsonPath = ".metadata.creationTimestamp", type = AdditionalPrinterColumn.Type.DATE)
 public class LoadTest extends CustomResource<LoadTestSpec, LoadTestStatus> implements Namespaced {
 }
