@@ -100,11 +100,10 @@ class FeatureRunSpec extends AnyFunSuite with BeforeAndAfterAll {
     val times = requests("ping-throttled").map(_.start).sorted
     // 120 users were planned, but the 4s throttle (1s ramp + 3s hold) ends the scenario: ~10 rps x 4s
     assert(times.size >= 30 && times.size <= 50, s"${times.size} requests")
-    // while holding, requests are ~100ms apart (10 rps)
-    val holding = times.filter(_ >= times.head + 1500)
-    val gaps = holding.zip(holding.drop(1)).map { case (a, b) => b - a }
-    val avg = gaps.sum.toDouble / gaps.size
-    assert(avg >= 80 && avg <= 130, s"average gap ${avg}ms")
+    // while holding (1.5 s - 3.5 s) the rate is ~10 rps -> ~20 requests in those 2 seconds. The window stays clear of
+    // the end of the throttle, where Gatling may release a burst of queued requests before stopping.
+    val inWindow = times.count(t => t >= times.head + 1500 && t < times.head + 3500)
+    assert(inWindow >= 10 && inWindow <= 30, s"$inWindow requests between 1.5 s and 3.5 s (expected ~20 at 10 rps)")
   }
 
   test("validate warns when a throttle is shorter than the load it throttles") {

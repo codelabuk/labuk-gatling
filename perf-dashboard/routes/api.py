@@ -1,0 +1,200 @@
+"""JSON API for the React app."""
+import re
+from datetime import datetime, timezone
+
+from flask import Blueprint, abort, jsonify, request
+from kubernetes.client.exceptions import ApiException
+
+import config
+import kube
+import live
+import storage
+
+bp = Blueprint("api", __name__, url_prefix="/api")
+
+_NAME = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+
+
+def _watched(ns):
+    if ns not in config.WATCH_NAMESPACES:
+        abort(404, description=f"namespace {ns} is not watched by this dashboard")
+
+
+@bp.errorhandler(ApiException)
+def _k8s_error(e):
+    return jsonify(error=e.reason, status=e.status), e.status or 500
+
+
+def _row(lt):
+    meta, spec, st = lt.get("metadata", {}), lt.get("spec", {}), lt.get("status") or {}
+    plan = spec.get("plan") or {}
+    return {
+        "namespace": meta.get("namespace"),
+        "name": meta.get("name"),
+        "created": meta.get("creationTimestamp"),
+        "plan": st.get("plan") or plan.get("file"),
+        "planFile": plan.get("file"),
+        "workers": spec.get("workers", 1),
+        "phase": st.get("phase") or "Pending",
+        "message": st.get("message"),
+        "result": st.get("result"),
+        "workersSucceeded": st.get("workersSucceeded", 0),
+        "workersFailed": st.get("workersFailed", 0),
+        "startedAt": st.get("startedAt"),
+        "startAt": st.get("startAt"),
+        "finishedAt": st.get("finishedAt"),
+        "runDir": st.get("runDir"),
+        "reportPath": st.get("reportPath"),
+        "metricsEnabled": bool((spec.get("metrics") or {}).get("enabled")),
+    }
+
+
+def _report_key(row):
+    """s3://bucket/runs/x/report/merged/index.html -> runs/x/report/merged/index.html (only for our results bucket)."""
+    path = row.get("reportPath") or ""
+    bucket, _ = config.results_bucket_and_prefix()
+    if path.startswith(f"s3://{bucket}/"):
+        return path[len(f"s3://{bucket}/"):]
+    return None
+
+
+@bp.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@bp.get("/config")
+def get_config():
+    return {
+        "namespaces": config.WATCH_NAMESPACES,
+        "resultsUrl": config.RESULTS_URL,
+        "defaults": {"image": config.DEFAULT_IMAGE, "s3Secret": config.DEFAULT_S3_SECRET, "s3Endpoint": config.DEFAULT_RUN_S3_ENDPOINT},
+    }
+
+
+@bp.get("/loadtests")
+def list_loadtests():
+    rows = [_row(lt) for lt in kube.list_loadtests(config.WATCH_NAMESPACES)]
+    for r in rows:
+        r["report"] = _report_key(r)
+    rows.sort(key=lambda r: r["created"] or "", reverse=True)
+    return jsonify(rows)
+
+
+@bp.get("/loadtests/<ns>/<name>")
+def get_loadtest(ns, name):
+    _watched(ns)
+    lt = kube.get_loadtest(ns, name)
+    row = _row(lt)
+    row["report"] = _report_key(row)
+    row["spec"] = lt.get("spec", {})
+    row["jobs"] = sorted((kube.describe_job(j) for j in kube.jobs_for(ns, name)), key=lambda j: j["start"] or "")
+    row["pods"] = sorted((kube.describe_pod(p) for p in kube.pods_for(ns, name)),
+                         key=lambda p: (p["role"] != "workers", p["worker"] if p["worker"] is not None else 0, p["name"]))
+    return jsonify(row)
+
+
+@bp.get("/loadtests/<ns>/<name>/metrics")
+def get_metrics(ns, name):
+    _watched(ns)
+    lt = kube.get_loadtest(ns, name)
+    metrics = (lt.get("spec") or {}).get("metrics") or {}
+    if not metrics.get("enabled"):
+        return {"enabled": False, "workers": [], "unreachable": [], "total": None}
+    pods = [kube.describe_pod(p) for p in kube.pods_for(ns, name)]
+    return {"enabled": True, **live.scrape(pods, metrics.get("port", 9464), run_key=f"{ns}/{name}")}
+
+
+@bp.get("/loadtests/<ns>/<name>/summary")
+def get_summary(ns, name):
+    _watched(ns)
+    run_dir = ((kube.get_loadtest(ns, name).get("status") or {}).get("runDir")) or ""
+    if not run_dir.startswith("s3://"):
+        return {"available": False, "reason": "results are not in S3 (pvc results are not readable by the dashboard)"}
+    return {"available": True, **storage.run_summary(run_dir)}
+
+
+@bp.get("/pods/<ns>/<pod>/logs")
+def get_logs(ns, pod):
+    _watched(ns)
+    tail = min(max(int(request.args.get("tail", 500)), 10), 5000)
+    return {"pod": pod, "log": kube.pod_logs(ns, pod, tail)}
+
+
+def build_loadtest(body):
+    """Validates a New-run form and turns it into a LoadTest resource. Raises ValueError with a readable message."""
+    ns = body.get("namespace") or config.WATCH_NAMESPACES[0]
+    if ns not in config.WATCH_NAMESPACES:
+        raise ValueError(f"namespace {ns} is not watched by this dashboard")
+    plan = body.get("plan") or {}
+    file = (plan.get("file") or "").strip()
+    if not file:
+        raise ValueError("plan.file is required")
+    git, cm = plan.get("git") or {}, (plan.get("configMap") or "").strip()
+    if bool(git.get("repo")) == bool(cm):
+        raise ValueError("choose exactly one test source: a Git repository or a ConfigMap")
+    try:
+        workers = int(body.get("workers", 1))
+    except (TypeError, ValueError):
+        raise ValueError("workers must be a number")
+    if workers < 1 or workers > 200:
+        raise ValueError("workers must be between 1 and 200")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    base = re.sub(r"[^a-z0-9-]", "-", file.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()).strip("-")[:40] or "run"
+    name = (body.get("name") or f"{base}-{stamp}").strip().lower()
+    if not _NAME.match(name) or len(name) > 60:
+        raise ValueError("name must be lower case letters, digits and '-', at most 60 characters")
+
+    spec_plan = {"file": file}
+    if cm:
+        spec_plan["configMap"] = cm
+    else:
+        spec_plan["git"] = {"repo": git["repo"].strip(), "ref": (git.get("ref") or "main").strip()}
+        if git.get("tokenSecret"):
+            spec_plan["git"]["tokenSecret"] = {"name": git["tokenSecret"].strip()}
+    spec = {
+        "image": (body.get("image") or config.DEFAULT_IMAGE).strip(),
+        "plan": spec_plan,
+        "workers": workers,
+        "results": {"s3": {"url": config.RESULTS_URL, "credentialsSecret": config.DEFAULT_S3_SECRET,
+                           "endpoint": config.DEFAULT_RUN_S3_ENDPOINT}},
+        "metrics": {"enabled": bool(body.get("metrics", True))},
+    }
+    env = {k.strip(): str(v) for k, v in (body.get("env") or {}).items() if k and k.strip()}
+    if env:
+        spec["env"] = env
+    secrets = [s.strip() for s in (body.get("secretRefs") or []) if s and s.strip()]
+    if secrets:
+        spec["secretRefs"] = secrets
+    scenarios = [s.strip() for s in (body.get("scenarios") or []) if s and s.strip()]
+    if scenarios:
+        spec["scenarios"] = scenarios
+    res = {k: str(body[k]).strip() for k in ("cpu", "memory") if body.get(k)}
+    if res:
+        spec["resources"] = {"requests": dict(res), "limits": dict(res)}
+    if body.get("startDelaySeconds"):
+        spec["startDelaySeconds"] = max(5, int(body["startDelaySeconds"]))
+    return ns, {"apiVersion": f"{kube.GROUP}/{kube.VERSION}", "kind": "LoadTest",
+                "metadata": {"name": name, "namespace": ns}, "spec": spec}
+
+
+@bp.post("/loadtests")
+def create_loadtest():
+    try:
+        ns, body = build_loadtest(request.get_json(force=True) or {})
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    created = kube.create_loadtest(ns, body)
+    return jsonify(_row(created)), 201
+
+
+@bp.delete("/loadtests/<ns>/<name>")
+def delete_loadtest(ns, name):
+    _watched(ns)
+    kube.delete_loadtest(ns, name)
+    return {"deleted": name}
+
+
+@bp.get("/runs")
+def list_runs():
+    return jsonify(storage.list_runs())

@@ -14,6 +14,7 @@ gatling-api-core ──► gatling-sql ──┐
 | 2 | `gatling-sql` | ✅ done incl. `batch` (verified on Derby; Oracle not yet tried on a real DB) | M |
 | 3 | `gatling-runner` | ✅ done: `perf` incl. `submit`/`status`, `s3://` results (verified on MinIO), Dockerfile image (verified) | M |
 | 4 | `loadtest-operator` | ✅ done — **verified on a real cluster** (minikube, Helm-installed); S3 results, printer columns, leader election added after | L |
+| 6 | `perf-dashboard` (web UI) | ✅ v1 — verified on Docker Desktop Kubernetes: runs started from it, live per-worker metrics, final summaries, reports from MinIO | M |
 | 5 | Platform — live metrics, result storage | ✅ live metrics + Grafana dashboard; S3/MinIO results | S–M |
 
 ### Status — 2026-11-17
@@ -35,6 +36,7 @@ limit still applies). Verified: `docker run --cpus=1 ... run` hung before, compl
 
 | Open | Needs |
 |---|---|
+| perf-dashboard: login (OIDC), run comparison, PVC results | design decision |
 | Spreading workers one per node on multi-node clusters (anti-affinity / topology spread) - not built yet | decision + small change |
 | Oracle-specific behaviour (REF CURSOR, PL/SQL OUT params, driver settings) - distributed SQL on a real DB | a dev Oracle database (or the Oracle Free container) |
 | Grafana dashboard in a real Grafana + Prometheus | a Grafana/Prometheus instance |

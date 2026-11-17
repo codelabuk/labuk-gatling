@@ -9,6 +9,7 @@ import scala.util.Try
 import org.codelabuk.perf.cli.{Merge, Validate}
 import org.codelabuk.perf.data.Worker
 import org.codelabuk.perf.load.{PlanException, PlanLoader, RunOptions}
+import org.codelabuk.perf.metrics.RunSummary
 import org.codelabuk.perf.sim.YamlSimulation
 
 /**
@@ -134,10 +135,22 @@ object Perf {
       a.passThrough("--description") ++ (if (a.has("--no-report")) List("--no-report") else Nil))
     val built = code == 0 || code == 2
 
+    // final numbers of the whole run as JSON (summary.json next to the report folder) - read by the perf-dashboard
+    val localOutDir = localOutput.map(Paths.get(_)).getOrElse { val in = Paths.get(localInput); in.resolveSibling(in.getFileName.toString + "-merged") }
+    val mergedLog = localOutDir.resolve(name).resolve("simulation.log")
+    val summary =
+      if (!built || !Files.exists(mergedLog)) None
+      else {
+        val workers = Try(Files.list(Paths.get(localInput)).iterator().asScala.count(_.getFileName.toString.endsWith(".log"))).getOrElse(0)
+        Try(RunSummary.write(RunSummary.fromLog(mergedLog, Map("workers" -> workers, "slaPassed" -> (code == 0))),
+          localOutDir.resolve("summary.json"))).toOption
+      }
+
     val reportPath = output match {
       case Some(o) if S3.isS3(o) =>
         if (built) {
           val n = Try(S3.uploadDir(s3.get, Paths.get(localOutput.get).resolve(name), s"$o/$name")).fold(e => return fail(s"perf report: ${e.getMessage}"), identity)
+          summary.foreach(s => Try(S3.upload(s3.get, s, s"$o/summary.json")))
           println(s"uploaded the report ($n files) to $o/$name/")
         }
         s"$o/$name/index.html"
@@ -247,15 +260,22 @@ object Perf {
     val code = gatling(runDir, noReports = true, a.opt("--description"))
     val log = findLog(runDir)
     log.foreach { l =>
+      // final numbers of this worker as JSON next to its log (read by the perf-dashboard after the pod is gone)
+      val summary = Try(RunSummary.write(RunSummary.fromLog(l, Map("worker" -> w.index, "workers" -> w.count)),
+        Files.createTempDirectory("perf-summary").resolve(s"worker-${w.index}.json"))).toOption
       if (S3.isS3(results)) {
         val target = s"${results.stripSuffix("/")}/worker-${w.index}.log"
-        Try(S3.upload(s3.get, l, target)).fold(e => return fail(s"perf worker: ${e.getMessage}"), identity)
+        Try {
+          S3.upload(s3.get, l, target)
+          summary.foreach(s => S3.upload(s3.get, s, s"${results.stripSuffix("/")}/worker-${w.index}.json"))
+        }.fold(e => return fail(s"perf worker: ${e.getMessage}"), identity)
         println(s"Worker ${w.index + 1}/${w.count}: results in $target")
       } else {
         val dir = Paths.get(results)
         val target = dir.resolve(s"worker-${w.index}.log")
         Files.createDirectories(dir)
         Files.copy(l, target, StandardCopyOption.REPLACE_EXISTING)
+        summary.foreach(s => Files.copy(s, dir.resolve(s"worker-${w.index}.json"), StandardCopyOption.REPLACE_EXISTING))
         println(s"Worker ${w.index + 1}/${w.count}: results in $target")
       }
     }

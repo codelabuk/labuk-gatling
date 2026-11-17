@@ -1,0 +1,7 @@
+apiVersion: v2
+name: perf-dashboard
+description: Web UI for distributed Gatling load tests - runs, live metrics per worker, reports served from S3/MinIO.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords: [gatling, load-testing, performance, dashboard]

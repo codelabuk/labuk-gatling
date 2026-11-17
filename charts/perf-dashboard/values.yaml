@@ -1,0 +1,56 @@
+# perf-dashboard Helm values.
+#   helm upgrade --install perf-dashboard charts/perf-dashboard -n perf \
+#     --set image.repository=registry.example.com/perf/labuk-perf-dashboard --set image.tag=1.0.0
+
+image:
+  repository: labuk-perf-dashboard
+  tag: ""                      # defaults to the chart's appVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# LoadTests in these namespaces are shown; new runs can be created in them
+watchNamespaces: [perf]
+
+# where run results are (the dashboard reads summaries and serves reports from here)
+results:
+  url: s3://perf-results/runs
+  s3Endpoint: http://minio.minio.svc:9000
+  region: us-east-1
+  # Secret (in the release namespace) with AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
+  credentialsSecret: minio-creds
+
+# defaults for runs started from the dashboard
+runDefaults:
+  image: labuk-perf-runner:1.0-SNAPSHOT
+  s3CredentialsSecret: minio-creds     # Secret the worker pods use (in the run's namespace)
+  s3Endpoint: http://minio.minio.svc:9000
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: nginx
+  host: perf-dashboard.codelabuk.dev
+  tlsSecretName: perf-dashboard-tls    # empty = no TLS
+  annotations: {}
+
+serviceAccount:
+  create: true
+  name: ""
+
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits: { memory: 384Mi }
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities: { drop: ["ALL"] }
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

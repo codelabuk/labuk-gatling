@@ -45,6 +45,27 @@ class MetricsSpec extends AnyFunSuite {
     }
   }
 
+  test("run summary: exact totals and per-request percentiles from the log") {
+    val s = org.codelabuk.perf.metrics.RunSummary.fromLog(sample, Map("worker" -> 0))
+    val events = readAll()
+    val requests = events.collect { case r: LogEvent.Request => r }
+    val total = s.get("total").asInstanceOf[java.util.Map[String, Any]]
+    assert(total.get("count") == requests.size.toLong)
+    assert(total.get("ko") == requests.count(!_.ok).toLong)
+    assert(s.get("users") == events.count { case LogEvent.User(_, true, _) => true; case _ => false }.toLong)
+    assert(s.get("worker") == 0)
+    val perRequest = s.get("requests").asInstanceOf[java.util.List[java.util.Map[String, Any]]]
+    val getStatus = requests.filter(r => (r.groups :+ r.name).mkString(" / ") == "sr-end-to-end / getSrStatus").map(r => r.end - r.start).sorted
+    val row = perRequest.toArray.map(_.asInstanceOf[java.util.Map[String, Any]]).find(_.get("name") == "sr-end-to-end / getSrStatus").get
+    assert(row.get("count") == getStatus.size.toLong && row.get("max") == getStatus.last && row.get("min") == getStatus.head)
+    val p50 = row.get("p50").asInstanceOf[Long]
+    assert(p50 >= getStatus.head && p50 <= getStatus.last)
+    // written as JSON
+    val f = Files.createTempFile("summary", ".json")
+    org.codelabuk.perf.metrics.RunSummary.write(s, f)
+    assert(new String(Files.readAllBytes(f)).contains("\"requestsPerSecond\""))
+  }
+
   test("Prometheus output: totals match the log, histograms are cumulative") {
     val events = readAll()
     val m = new LiveMetrics("sr-email-status", "0")

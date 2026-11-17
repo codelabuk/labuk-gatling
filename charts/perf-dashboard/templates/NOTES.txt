@@ -1,0 +1,13 @@
+perf-dashboard is running in namespace {{ .Release.Namespace }}, showing LoadTests in: {{ join ", " .Values.watchNamespaces }}.
+{{- if .Values.ingress.enabled }}
+
+Open: http{{ if .Values.ingress.tlsSecretName }}s{{ end }}://{{ .Values.ingress.host }}
+{{- else }}
+
+Open it with a port-forward:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "perf-dashboard.fullname" . }} 8080:{{ .Values.service.port }}
+  then http://localhost:8080
+{{- end }}
+
+Results are read from {{ .Values.results.url }} ({{ .Values.results.s3Endpoint }}) with the credentials in Secret
+{{ .Values.results.credentialsSecret }}. Live metrics need the dashboard to reach worker pods on their metrics port.

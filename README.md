@@ -11,6 +11,7 @@ variables and conditions all live in the YAML; the engine has no business logic 
 | `gatling-api-core` | ✅ v1.1 | The engine: YAML loader + validation, HTTP, auth, data, flow control, load profiles, SLAs, distributed-run support (worker split, synchronised start, setup once, log merge) |
 | `gatling-sql` | ✅ v1 | `sql:` steps and `jdbc` data sources — any JDBC database (Oracle and PostgreSQL drivers included) |
 | `gatling-runner` | ✅ v1 | The `perf` command (zip for Windows/Linux/macOS) + Docker image config — no Maven needed for testers |
+| `perf-dashboard` | ✅ v1 (verified on Docker Desktop Kubernetes) | Web UI: runs, live metrics per worker, final numbers, logs, reports from MinIO |
 | `loadtest-operator` | ✅ v1 (verified on minikube, installed with Helm) | Kubernetes operator (Java, JOSDK + fabric8): one `LoadTest` = validate → setup → N workers → merged report |
 
 Stack: Java 17, Maven 3.9, Scala 2.13.15, Gatling 3.13.1.
@@ -669,6 +670,44 @@ for every run — a finished one is never re-run.
 
 The operator uses leader election (a Lease in its namespace), so `replicaCount: 2` gives a standby. To run it
 from a laptop against a cluster during development: `KUBE_CONTEXT=<context> java -cp ... OperatorMain`.
+
+---
+
+## perf-dashboard (web UI)
+
+Like Spark's UI + history server, for load tests: every run, its phases, **live metrics per worker** while it
+runs, the final numbers, pod logs, and the Gatling HTML report opened straight from S3/MinIO. Design:
+[docs/perf-dashboard-design.md](docs/perf-dashboard-design.md). Code: `perf-dashboard/` (Flask + React, same stack
+as the spark-dashboard).
+
+| Page | Shows |
+|---|---|
+| Runs | every LoadTest: phase, result, workers done/total, start, duration, report link |
+| Run detail | steps (validate → setup → workers → report), cards (requests, errors %, req/s, p95, users, SLAs), live throughput + users charts, per-request and per-transaction tables, errors, **workers table** (pod, node, state, restarts, requests, live users / p95, log viewer), the LoadTest spec, Stop & delete |
+| New run | form → LoadTest (Git or ConfigMap plan, workers, CPU/memory, env, secrets, start delay, live metrics) |
+| History | every run folder in the results bucket with its final numbers and report link |
+
+```bash
+docker build -t labuk-perf-dashboard:1.0.0 perf-dashboard            # or push to your registry
+helm upgrade --install perf-dashboard charts/perf-dashboard -n perf   --set results.url=s3://perf-results/runs --set results.s3Endpoint=http://minio.minio.svc:9000   --set results.credentialsSecret=minio-creds                          # Secret with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+kubectl -n perf port-forward svc/perf-dashboard 8080:80                # or --set ingress.enabled=true (host perf-dashboard.codelabuk.dev)
+```
+
+How the numbers work:
+- **live** (while Running): the dashboard scrapes each worker's `/metrics` (runs need `metrics.enabled`, on by
+  default for runs started from the dashboard) and sums them; finished workers keep counting with their last
+  numbers, so totals never go down. p95 here is an estimate from histogram buckets. Small tests update in steps
+  (Gatling writes its log in chunks).
+- **final** (Completed): `perf worker` writes `logs/worker-<i>.json` and `perf report` writes
+  `report/summary.json` next to the report; the dashboard reads those. Percentiles are computed exactly like
+  Gatling's report (same t-digest), so the dashboard and the HTML report show the same numbers.
+
+Limits (v1): results must be in S3/MinIO (PVC results show status and pods only); no login — keep it behind your
+ingress/network rules; runs older than this feature have no summary in History.
+
+Developing it: `cd perf-dashboard && python -m venv .venv && .venv/Scripts/pip install -r requirements.txt pytest`
+then `python -m pytest tests`; UI: `cd frontend && npm install && npm run dev` (proxies `/api` to a local
+`python app.py` with `KUBE_CONTEXT=...`).
 
 ---
 
