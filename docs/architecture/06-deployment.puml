@@ -18,16 +18,16 @@ node "Kubernetes cluster" <<cluster>> {
     component "Deployment loadtest-operator\n+ ServiceAccount, ClusterRole,\nLease Role (leader election)" as op <<ctrl>>
     component "Deployment perf-dashboard\n+ Service, ClusterRole" as dash <<ctrl>>
     component "Ingress perf-dashboard\nTLS: perf-dashboard-tls" as ing <<ctrl>>
-    component "Secrets: minio-creds,\nperf-secrets, git-creds" as sec <<input>>
-    component "Jobs + pods per LoadTest\n(runner image)" as runs <<run>>
+    component "Secrets: minio-creds, perf-secrets,\ngit-creds (Git runs only)" as sec <<input>>
+    component "Jobs + pods per LoadTest\n(runner image, also fetch-tests)" as runs <<run>>
   }
   package "namespace: minio" <<store>> {
-    database "MinIO\nbucket perf-results" as minio <<store>>
+    database "MinIO bucket perf-results\ntest-plans/ + runs/" as minio <<store>>
   }
 }
 
 artifact "helm: charts/loadtest-operator" as helm_op <<build>>
-artifact "helm: charts/perf-dashboard" as helm_dash <<build>>
+artifact "helm: charts/perf-dashboard\nresults.url, results.plansUrl" as helm_dash <<build>>
 
 ' build and publish
 mvn -[#5B6B7F]-> img_runner
@@ -50,8 +50,8 @@ Browser -[#2F6FD6,bold]-> ingressctl : https://perf-dashboard.codelabuk.dev
 ingressctl -[#2F6FD6]-> ing
 ing -[#2F6FD6]-> dash
 op -[#2F6FD6]-> runs : creates Jobs
-runs -[#D98E04,bold]-> minio : results
-dash -[#D98E04]-> minio : reads results
+runs -[#D98E04,bold]-> minio : tests copy, results
+dash -[#D98E04]-> minio : suites read/write,\nresults read/delete
 sec -[#B59F3B,dashed]-> runs : env
 sec -[#B59F3B,dashed]-> dash : env
 
@@ -59,7 +59,7 @@ legend right
   <b>Colour key</b>
   |<#EEF1F5> build / images / charts |<#5B6B7F><color:#FFFFFF> build, install, pull </color>|
   |<#E3EEFF> control plane |<#2F6FD6><color:#FFFFFF> traffic / control </color>|
-  |<#E3F6E8> run pods |<#D98E04><color:#FFFFFF> results data </color>|
+  |<#E3F6E8> run pods |<#D98E04><color:#FFFFFF> tests + results data </color>|
   |<#FFF3D9> storage |<#B59F3B><color:#FFFFFF> secrets as env </color>|
   |<#FFFBEA> secrets | |
 endlegend

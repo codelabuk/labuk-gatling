@@ -3,30 +3,30 @@
 title labuk-gatling - system context
 left to right direction
 
-actor "Perf tester / QA" as tester
-actor "CI pipeline\nJenkins / GitLab" as ci
+actor "Perf tester / QA\nbrowser only" as tester
+actor "CI pipeline / GitOps\nJenkins, GitLab, Argo CD" as ci
 actor "Framework developer" as dev
-database "Git repo\nYAML plans, API catalog, CSV" as git <<input>>
+database "Git repo (optional)\nfor CI / GitOps runs" as git <<input>>
 
-node "Tester's machine" <<local>> {
+node "Developer machine / CI agent" <<local>> {
   component "perf CLI\nvalidate | run | submit | status | fetch | convert-lr" as cli <<code>>
 }
 
 cloud "Kubernetes cluster (on-prem)" {
   component "Ingress (nginx, TLS)\nperf-dashboard.codelabuk.dev" as ingress <<ctrl>>
   package "namespace: perf" <<ns>> {
-    component "perf-dashboard\nFlask API + React UI" as dashboard <<ctrl>>
+    component "perf-dashboard\nRuns, New run, Test plans, History" as dashboard <<ctrl>>
     component "loadtest-operator\n2 replicas, leader election" as operator <<ctrl>>
     collections "LoadTest\nperf.codelabuk.org/v1alpha1" as crd <<ctrl>>
     package "Jobs of one run" <<run>> {
-      component "validate" as validate <<run>>
+      component "validate\nfetches suite, keeps a copy" as validate <<run>>
       component "setup (once)" as setup <<run>>
       component "workers x N\nIndexed Job, /metrics :9464" as workers <<run>>
       component "report (merge)" as report <<run>>
     }
   }
   package "namespace: minio" <<store>> {
-    database "MinIO / S3\nbucket perf-results" as minio <<store>>
+    database "MinIO / S3 bucket perf-results\ntest-plans/ (suites) + runs/ (results)" as minio <<store>>
   }
   component "Prometheus + Grafana\n(optional)" as prom <<obs>>
 }
@@ -37,32 +37,33 @@ package "Systems under test" <<sut>> {
 }
 
 ' control
-tester -[#2F6FD6]-> ingress : browser, HTTPS
+tester -[#2F6FD6,bold]-> ingress : browser, HTTPS: test plans,\nruns, live view, reports
 ingress -[#2F6FD6]-> dashboard
-tester -[#2F6FD6]-> cli
+dev -[#2F6FD6]-> cli
 ci -[#2F6FD6]-> cli
 dev -[#5B6B7F,dashed]-> crd : mvn install, docker build, helm
-cli -[#2F6FD6]-> crd : kubectl: LoadTest, ConfigMap
+cli -[#2F6FD6]-> crd : kubectl: LoadTest
 dashboard -[#2F6FD6]-> crd : create / list / delete
 operator -[#2F6FD6]-> crd : watches
 operator -[#2F6FD6]-> validate : creates Jobs,\nreads results
 operator -[#2F6FD6]-> setup
 operator -[#2F6FD6]-> workers
 operator -[#2F6FD6]-> report
-validate -[#B59F3B,dashed]-> git : clone tests
-workers -[#B59F3B,dashed]-> git : clone tests
+validate -[#B59F3B,dashed]-> git : or clone (CI / GitOps)
+
+' test files and results
+dashboard -[#B59F3B,bold]-> minio : suites: upload, edit, delete
+validate -[#B59F3B]-> minio : suite -> run's tests copy
+setup -[#D98E04]-> minio : tests copy, shared.json
+workers -[#D98E04]-> minio : tests copy, logs + summaries
+report -[#D98E04]-> minio : report + summary.json
+dashboard -[#D98E04]-> minio : results: read, delete
+cli -[#D98E04]-> minio : perf fetch
 
 ' load
-cli -[#C0392B,bold]-> apis : perf run (local load)
+cli -[#C0392B,bold]-> apis : perf run (local debug load)
 workers -[#C0392B,bold]-> apis : load
 workers -[#C0392B,bold]-> dbs : load
-
-' results
-setup -[#D98E04]-> minio : shared.json
-workers -[#D98E04]-> minio : logs + summaries
-report -[#D98E04]-> minio : report + summary.json
-dashboard -[#D98E04]-> minio : summaries, reports
-cli -[#D98E04]-> minio : perf fetch
 
 ' live metrics
 dashboard -[#17A2B8,dashed]-> workers : live metrics
@@ -74,7 +75,7 @@ legend right
   |<#E3F6E8> run pods |<#C0392B><color:#FFFFFF> load </color>|
   |<#FFF3D9> results / storage |<#D98E04><color:#FFFFFF> results data </color>|
   |<#FDE7E7> systems under test |<#17A2B8><color:#FFFFFF> live metrics </color>|
-  |<#FFFBEA> test files |<#5B6B7F><color:#FFFFFF> build / deploy </color>|
-  |<#E0F5F7> observability | |
+  |<#FFFBEA> test files |<#B59F3B><color:#FFFFFF> test files </color>|
+  |<#E0F5F7> observability |<#5B6B7F><color:#FFFFFF> build / deploy </color>|
 endlegend
 @enduml

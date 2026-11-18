@@ -16,21 +16,21 @@ flowchart TB
             op["Deployment loadtest-operator<br/>+ ServiceAccount, ClusterRole,<br/>Lease Role (leader election)"]
             dash["Deployment perf-dashboard<br/>+ Service, ClusterRole"]
             ing["Ingress perf-dashboard<br/>TLS: perf-dashboard-tls"]
-            sec["Secrets: minio-creds,<br/>perf-secrets, git-creds"]
-            runs["Jobs + pods per LoadTest<br/>(runner image)"]
+            sec["Secrets: minio-creds, perf-secrets,<br/>git-creds (Git runs only)"]
+            runs["Jobs + pods per LoadTest<br/>(runner image, also fetch-tests)"]
         end
         subgraph miniofs["namespace: minio"]
-            minio[("MinIO<br/>bucket perf-results")]
+            minio[("MinIO bucket perf-results<br/>test-plans/ + runs/")]
         end
         ingressctl["ingress-nginx"]
     end
 
     helm_op["helm: charts/loadtest-operator"] --> op & crd
-    helm_dash["helm: charts/perf-dashboard"] --> dash & ing
+    helm_dash["helm: charts/perf-dashboard<br/>results.url, results.plansUrl"] --> dash & ing
     registry -.-> op & dash & runs
     ingressctl --> ing --> dash
     op --> runs
-    runs --> minio
-    dash --> minio
+    runs -->|"tests copy, results"| minio
+    dash -->|"suites read/write,<br/>results read/delete"| minio
     sec -.-> runs & dash
     browser(["Browser"]) -->|"https://perf-dashboard.codelabuk.dev"| ingressctl

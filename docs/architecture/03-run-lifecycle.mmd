@@ -2,7 +2,7 @@
 sequenceDiagram
     autonumber
     actor T as Tester
-    participant D as perf-dashboard / perf submit
+    participant D as perf-dashboard
     participant K as Kubernetes API
     participant O as loadtest-operator
     participant V as validate pod
@@ -12,21 +12,25 @@ sequenceDiagram
     participant M as MinIO / S3
     participant SUT as APIs / DBs
 
-    T->>D: New run (plan, workers, env)
-    D->>K: create LoadTest
+    T->>D: Test plans: create / upload / edit a suite
+    D->>M: test-plans/suite/... (YAML syntax checked)
+    T->>D: New run (suite, plan, workers, env)
+    D->>K: create LoadTest (plan.s3 = test-plans/suite)
     O->>K: reconcile (every 5 s)
     O->>K: create Job "validate"
-    K->>V: start (init: git clone tests)
+    K->>V: start (init: fetch-tests)
+    V->>M: fetch suite, store copy in runs/run/tests
     V->>V: perf validate --facts-file /dev/termination-log
     V-->>O: facts: valid, hasSetup, scenarios
     alt plan has setup.share
         O->>K: create Job "setup"
+        S->>M: fetch tests copy
         S->>SUT: setup steps (e.g. login, load list)
         S->>M: shared.json
     end
     O->>K: create Indexed Job "workers" (START_AT = now + delay)
     K->>W: N pods (JOB_COMPLETION_INDEX = worker number)
-    W->>M: read shared.json (if any)
+    W->>M: fetch tests copy, read shared.json (if any)
     W->>W: wait for START_AT
     loop during the test
         W->>SUT: load (users / rates divided by N)
@@ -34,10 +38,15 @@ sequenceDiagram
     end
     W->>M: logs/worker-i.log + worker-i.json
     O->>K: create Job "report" (all workers succeeded)
-    R->>M: download logs
+    R->>M: fetch tests copy, download logs
     R->>R: LogMerger + Gatling reports-only (SLAs on all data)
     R->>M: report/merged/* + report/summary.json
     R-->>O: facts: reportBuilt, slaPassed, report path
     O->>K: status Completed, result Passed / SLAFailed
     D->>M: summary.json, worker-*.json, report files
     D-->>T: final numbers + Open report
+    opt clean-up (finished runs only)
+        T->>D: Delete run (+ results) / History: Delete
+        D->>K: delete LoadTest (Jobs, pods go with it)
+        D->>M: delete runs/run/ (logs, report, tests copy)
+    end

@@ -1,7 +1,11 @@
 @startuml 04-results-flow
 !include _theme.iuml
-title labuk-gatling - results and metrics (live while running, exact when finished)
+title labuk-gatling - test files in, results out (live while running, exact when finished)
 left to right direction
+
+database "MinIO / S3: perf-results/test-plans/SUITE/" as plans <<input>> {
+  file "plans/*.yaml, apis/*.yaml,\ndata/*.csv, bodies/*" as suite <<input>>
+}
 
 node "each worker pod" <<run>> {
   component "Gatling engine" as engine <<run>>
@@ -18,6 +22,7 @@ node "report pod" <<run>> {
 }
 
 database "MinIO / S3: perf-results/runs/RUN-FOLDER/" as store <<store>> {
+  file "tests/\ncopy of the suite taken by validate" as tests <<input>>
   file "shared.json" as shared <<store>>
   file "logs/worker-i.log\nlogs/worker-i.json" as logs <<store>>
   file "report/merged/index.html ..." as html <<store>>
@@ -26,6 +31,11 @@ database "MinIO / S3: perf-results/runs/RUN-FOLDER/" as store <<store>> {
 
 component "perf-dashboard" as dash <<ctrl>>
 component "Prometheus / Grafana" as prom <<obs>>
+
+' test files
+dash -[#B59F3B,bold]-> suite : Test plans: upload, edit
+suite -[#B59F3B,bold]-> tests : validate: fetch --snapshot
+tests -[#B59F3B]-> engine : fetch-tests
 
 ' inside the worker
 engine -[#2E8B57]-> log
@@ -48,9 +58,11 @@ metrics -[#17A2B8,dashed]-> prom : scrape
 logs -[#D98E04]-> dash : per-worker final
 summary -[#D98E04]-> dash : run final
 html -[#D98E04]-> dash : /reports/... in the browser
+dash -[#C0392B,dashed]-> store : delete run folder\n(finished runs only)
 
 legend right
-  <b>Two paths</b>
+  <b>Paths</b>
+  |<#B59F3B><color:#FFFFFF> tests </color>| suite -> frozen copy per run -> every pod |
   |<#17A2B8><color:#FFFFFF> live </color>| while running, from the growing log |
   |<#D98E04><color:#FFFFFF> final </color>| after the run, exact, same as the HTML report |
 endlegend

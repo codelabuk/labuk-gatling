@@ -3,15 +3,16 @@
 title labuk-gatling - engine internals (YAML to Gatling)
 left to right direction
 
-package "Test files (no code)" <<input>> {
+package "Test files (no code) - a suite in S3, or Git for CI" <<input>> {
   file "plan.yaml\nscenarios, load, SLAs" as plan <<input>>
   file "apis/*.yaml\nAPI catalog" as catalog <<input>>
   file "data/*.csv" as data <<input>>
-  file "-DNAME=value / env vars\nfill the plan's placeholders" as env <<input>>
-  file "LoadRunner VuGen script" as vugen <<input>>
 }
+file "Variables / env\nfill the plan's placeholders" as env <<input>>
+file "LoadRunner VuGen script" as vugen <<input>>
 
 component "perf convert-lr\nVuGenConverter" as conv <<input>>
+component "fetch-tests init container\nperf fetch -> /tests" as fetch <<run>>
 component "PlanLoader\nplaceholders, includes,\ntypo + cross checks" as loader <<code>>
 component "TestPlan model\nsteps, auth, load, SLAs" as model <<code>>
 
@@ -37,14 +38,15 @@ database "Databases" as dbs <<sut>>
 
 ' conversion
 vugen -[#B59F3B]-> conv
-conv -[#B59F3B]-> plan
+conv -[#B59F3B]-> plan : upload as a suite
 conv -[#B59F3B]-> catalog
 conv -[#B59F3B]-> data
 
 ' loading
-plan -[#B59F3B]-> loader
-catalog -[#B59F3B]-> loader
-data -[#B59F3B]-> loader
+plan -[#B59F3B]-> fetch
+catalog -[#B59F3B]-> fetch
+data -[#B59F3B]-> fetch
+fetch -[#B59F3B]-> loader
 env -[#B59F3B]-> loader
 loader -[#6B4FBB,bold]-> model
 

@@ -4,7 +4,7 @@ title labuk-gatling - lifecycle of one distributed run
 autonumber "<b>[00]"
 
 actor Tester as T
-participant "perf-dashboard /\nperf submit" as D #E3EEFF
+participant "perf-dashboard" as D #E3EEFF
 
 box "Kubernetes cluster - namespace perf" #F4F8FF
   participant "Kubernetes API" as K #E3EEFF
@@ -23,20 +23,27 @@ box "Systems under test" #FFF7F7
   participant "APIs / DBs" as SUT #FDE7E7
 end box
 
+== Test plans ==
+T -[#B59F3B]> D : Test plans: create / upload / edit a suite
+D -[#B59F3B]> M : test-plans/SUITE/... (YAML syntax checked)
+
 == Submit ==
-T -[#2F6FD6]> D : New run (plan, workers, env)
-D -[#2F6FD6]> K : create LoadTest
+T -[#2F6FD6]> D : New run (suite, plan, workers, env)
+D -[#2F6FD6]> K : create LoadTest (plan.s3 = test-plans/SUITE)
 O -[#2F6FD6]> K : reconcile (every 5 s)
 
 == Validate ==
 O -[#2F6FD6]> K : create Job "validate"
-K -[#2F6FD6]> V : start (init: git clone tests)
+K -[#2F6FD6]> V : start (init: fetch-tests)
+V -[#B59F3B]> M : fetch suite, store copy in runs/RUN/tests
+note over V #FFFBEA : later pods read this copy:\nediting the suite never changes a running test
 V -> V : perf validate --facts-file /dev/termination-log
 V -[#2F6FD6]-> O : facts: valid, hasSetup, scenarios
 
 == Setup (only if the plan shares lists) ==
 alt plan has setup.share
   O -[#2F6FD6]> K : create Job "setup"
+  S -[#B59F3B]> M : fetch tests copy
   S -[#C0392B]> SUT : setup steps (login, load list)
   S -[#D98E04]> M : shared.json
 end
@@ -44,7 +51,7 @@ end
 == Load ==
 O -[#2F6FD6]> K : create Indexed Job "workers"\n(START_AT = now + delay)
 K -[#2F6FD6]> W : N pods (JOB_COMPLETION_INDEX = worker number)
-W -[#D98E04]> M : read shared.json (if any)
+W -[#B59F3B]> M : fetch tests copy, read shared.json (if any)
 W -> W : wait for START_AT
 note over W #E3F6E8 : all workers start together
 loop during the test
@@ -55,7 +62,7 @@ W -[#D98E04]> M : logs/worker-i.log + worker-i.json
 
 == Report ==
 O -[#2F6FD6]> K : create Job "report" (all workers succeeded)
-R -[#D98E04]> M : download logs
+R -[#D98E04]> M : fetch tests copy, download logs
 R -> R : LogMerger + Gatling reports-only\n(SLAs judged on all data)
 R -[#D98E04]> M : report/merged/* + report/summary.json
 R -[#2F6FD6]-> O : facts: reportBuilt, slaPassed, report path
@@ -65,9 +72,17 @@ O -[#2F6FD6]> K : status Completed,\nresult Passed / SLAFailed
 D -[#D98E04]> M : summary.json, worker-*.json, report files
 D -[#2F6FD6]-> T : final numbers + Open report
 
+== Clean-up (finished runs only) ==
+opt Delete run (+ results) / History: Delete
+  T -[#2F6FD6]> D : delete
+  D -[#2F6FD6]> K : delete LoadTest (Jobs, pods go with it)
+  D -[#D98E04]> M : delete runs/RUN/ (logs, report, tests copy)
+end
+
 legend right
   <b>Arrows</b>
   |<#2F6FD6><color:#FFFFFF> control </color>|
+  |<#B59F3B><color:#FFFFFF> test files </color>|
   |<#C0392B><color:#FFFFFF> load </color>|
   |<#D98E04><color:#FFFFFF> results data </color>|
   |<#17A2B8><color:#FFFFFF> live metrics </color>|

@@ -21,7 +21,7 @@ package "gatling-sql (Scala)" as sql <<code>> {
 }
 
 package "gatling-runner (Scala)" as runner <<code>> {
-  component "Perf CLI" as r_perf <<code>>
+  component "Perf CLI\nincl. fetch --snapshot" as r_perf <<code>>
   component "Kube\nsubmit / status" as r_kube <<ctrl>>
   component "S3 client (SigV4)" as r_s3 <<store>>
   component "lr.VuGenConverter" as r_lr <<input>>
@@ -29,14 +29,15 @@ package "gatling-runner (Scala)" as runner <<code>> {
 }
 
 package "loadtest-operator (Java)" as operator <<ns>> {
-  component "LoadTest CRD\n(generated)" as o_crd <<ctrl>>
+  component "LoadTest CRD (generated)\nplan: s3 | git | configMap | inImage" as o_crd <<ctrl>>
   component "LoadTestReconciler\nLoadTestFlow" as o_flow <<ctrl>>
-  component "JobFactory" as o_jobs <<ctrl>>
+  component "JobFactory\nfetch-tests / clone-tests init containers" as o_jobs <<ctrl>>
 }
 
 package "perf-dashboard (Python + TypeScript)" as dashboard <<ns>> {
-  component "Flask\napi, reports, kube, live, storage" as d_api <<ctrl>>
-  component "React\nRuns, Run detail, New run, History" as d_ui <<ctrl>>
+  component "Flask routes\napi (runs, delete), plans, reports" as d_api <<ctrl>>
+  component "kube, live, storage,\nplan_store (suites in S3)" as d_store <<store>>
+  component "React\nRuns, Run detail, New run,\nTest plans, History" as d_ui <<ctrl>>
 }
 
 package "Helm charts" <<build>> {
@@ -78,7 +79,8 @@ o_flow -[#2F6FD6]-> o_jobs
 o_jobs -[#2F6FD6,dashed]-> r_dist : pods run the runner image
 o_crd -[#5B6B7F,dashed]-> h_op : copied into
 d_ui -[#2F6FD6]-> d_api
-d_api -[#2F6FD6,dashed]-> o_crd : reads / creates LoadTests
+d_api -[#2F6FD6]-> d_store
+d_store -[#2F6FD6,dashed]-> o_crd : reads / creates LoadTests
 h_dash -[#5B6B7F,dashed]-> dashboard : installs
 
 legend right

@@ -1,5 +1,9 @@
-%% 4. Results and metrics: live while running, exact when finished
+%% 4. Test files in, results out: live while running, exact when finished
 flowchart LR
+    subgraph plans["MinIO / S3: perf-results/test-plans/suite/"]
+        suite["plans/*.yaml, apis/*.yaml,<br/>data/*.csv, bodies/*"]
+    end
+
     subgraph worker["each worker pod"]
         engine["Gatling engine"]
         log[("simulation.log<br/>binary, written in chunks")]
@@ -11,6 +15,7 @@ flowchart LR
     end
 
     subgraph store["MinIO / S3: perf-results/runs/run-folder/"]
+        tests["tests/<br/>copy of the suite taken by validate"]
         shared["shared.json"]
         logs["logs/worker-i.log<br/>logs/worker-i.json"]
         html["report/merged/index.html ..."]
@@ -25,6 +30,8 @@ flowchart LR
         merger --> rsum
     end
 
+    suite -->|"validate: fetch --snapshot"| tests
+    tests -->|"fetch-tests"| engine
     log -->|"upload"| logs
     wsum -->|"upload"| logs
     logs --> merger
@@ -33,8 +40,10 @@ flowchart LR
 
     dash["perf-dashboard"]
     prom["Prometheus / Grafana"]
+    dash -->|"Test plans: upload, edit"| suite
     metrics -->|"live, summed across workers"| dash
     metrics -.-> prom
     logs -->|"per-worker final"| dash
     summary -->|"run final"| dash
     html -->|"/reports/... in the browser"| dash
+    dash -.->|"delete run folder"| store

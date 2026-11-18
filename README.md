@@ -10,18 +10,23 @@ variables and conditions all live in the YAML; the engine has no business logic 
 |---|---|---|
 | `gatling-api-core` | ✅ v1.1 | The engine: YAML loader + validation, HTTP, auth, data, flow control, load profiles, SLAs, distributed-run support (worker split, synchronised start, setup once, log merge) |
 | `gatling-sql` | ✅ v1 | `sql:` steps and `jdbc` data sources — any JDBC database (Oracle and PostgreSQL drivers included) |
-| `gatling-runner` | ✅ v1 | The `perf` command (zip for Windows/Linux/macOS) + Docker image config — no Maven needed for testers |
-| `perf-dashboard` | ✅ v1 (verified on Docker Desktop Kubernetes) | Web UI: runs, live metrics per worker, final numbers, logs, reports from MinIO |
+| `gatling-runner` | ✅ v1 | The `perf` command (zip for Windows/Linux/macOS) + the runner image the pods use — for developers and CI, no Maven needed |
+| `perf-dashboard` | ✅ v1 (verified on Docker Desktop Kubernetes) | Web UI: test plans kept in MinIO (upload, edit), new runs, live metrics per worker, final numbers, logs, reports from MinIO, deleting runs and results |
 | `loadtest-operator` | ✅ v1 (verified on minikube, installed with Helm) | Kubernetes operator (Java, JOSDK + fabric8): one `LoadTest` = validate → setup → N workers → merged report |
 
 Stack: Java 17, Maven 3.9, Scala 2.13.15, Gatling 3.13.1.
 
 ---
 
-## The `perf` command (for testers — no Maven)
+## The `perf` command (developers and CI — no Maven)
+
+**Testers use the [perf-dashboard](#perf-dashboard-web-ui)** in the browser: test plans, runs, live view,
+reports — no tools to install. The `perf` command is for framework developers (debugging a plan locally,
+converting LoadRunner scripts with `perf convert-lr`) and for CI pipelines; it is also what runs inside every
+pod of a distributed run.
 
 Build once (framework team): `mvn install` → `gatling-runner/target/perf-1.0-SNAPSHOT.zip`.
-Testers unzip it anywhere; only Java 17+ is needed.
+Unzip it anywhere; only Java 17+ is needed.
 
 ```bash
 perf validate plans/orders.yaml --workers 4          # check a plan, see the per-worker split
@@ -39,7 +44,7 @@ perf run      plans/orders.yaml --scenario checkout --results D:/perf-results
 | `perf report --input <logs> [--output <dir>]` | Merges workers' logs → one report + SLA verdict |
 | `perf submit <plan> --workers N ...` | Starts a distributed run on Kubernetes (no LoadTest YAML to write) — see below |
 | `perf status <run> [-n ns] [--watch]` | Follows it; with `--watch` the exit code is the verdict |
-| `perf fetch <s3://folder> [<dir>]` | Downloads a report / logs from S3 or MinIO (keeps the folder structure) |
+| `perf fetch <s3://folder> [<dir>] [--snapshot <s3://folder>]` | Downloads a report / logs / test folder from S3 or MinIO (keeps the folder structure); `--snapshot` also copies what was downloaded to another S3 folder (the operator uses it to freeze a run's tests) |
 | `perf convert-lr <VuGen script dir> [--out <dir>]` | Converts a LoadRunner web script to a YAML plan — see [LoadRunner scripts](#loadrunner-scripts-perf-convert-lr) |
 
 Options for `run` / `worker`: `--scenario a,b`, `--results <dir>`, `--workers N --worker-index i`,
@@ -149,7 +154,9 @@ without sending any traffic, then prints how users and data split across the wor
 
 ## Organising tests
 
-Keep tests in their own folder or repository — no code in it:
+Keep tests in their own folder — no code in it. On Kubernetes the folder is usually a **suite** on the
+dashboard's *Test plans* page (stored in `s3://perf-results/test-plans/<suite>/`; upload it as a zip or folder);
+for CI / GitOps it can also be a Git repository:
 
 ```
 perf-tests/
@@ -635,7 +642,7 @@ spec:
   # metrics: { enabled: true }                 # live Prometheus metrics + scrape annotations on workers
 ```
 
-Or let `perf` write it — testers only need `kubectl` access:
+Or let `perf` write it (developers / CI — needs `kubectl` access; testers use the dashboard instead):
 
 ```bash
 export PERF_IMAGE=registry.example.com/labuk-perf-runner:1.0.0 PERF_PVC=perf-results PERF_NAMESPACE=perf
@@ -771,6 +778,9 @@ It is not a comparison against LoadRunner's own numbers - for that, run the same
   response; `- log: "#{token}"` after a login helps.
 - **Users stop immediately** — a `queue` data source / share ran out; the warning at start-up says how many
   users it can serve.
+- **Run fails in Validating with "file not found"** — the plan's `include` / data paths are relative to the file
+  they are written in; check the suite's layout on the *Test plans* page (a zip of a folder is unpacked without
+  that folder's name).
 - **See request/response details for failures** — in `logback-test.xml` set
   `io.gatling.http.engine.response` to `TRACE` (failed requests) or `DEBUG` (all requests).
 

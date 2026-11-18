@@ -1,11 +1,11 @@
 %% 1. System context: who uses labuk-gatling and what runs where
 flowchart LR
-    tester(["Perf tester / QA"])
-    ci(["CI pipeline<br/>Jenkins / GitLab"])
+    tester(["Perf tester / QA<br/>browser only"])
+    ci(["CI pipeline / GitOps<br/>Jenkins, GitLab, Argo CD"])
     dev(["Framework developer"])
-    git[("Git repo<br/>YAML plans, API catalog, CSV")]
+    git[("Git repo (optional)<br/>for CI / GitOps runs")]
 
-    subgraph local["Tester's machine"]
+    subgraph local["Developer machine / CI agent"]
         cli["perf CLI<br/>validate | run | submit | status | fetch | convert-lr"]
     end
 
@@ -13,18 +13,18 @@ flowchart LR
         direction TB
         ingress["Ingress (nginx, TLS)<br/>perf-dashboard.codelabuk.dev"]
         subgraph nsperf["namespace: perf"]
-            dashboard["perf-dashboard<br/>Flask API + React UI"]
+            dashboard["perf-dashboard<br/>Runs, New run, Test plans, History"]
             operator["loadtest-operator<br/>2 replicas, leader election"]
             crd[["LoadTest<br/>perf.codelabuk.org/v1alpha1"]]
             subgraph jobs["Jobs of one run"]
-                validate["validate"]
+                validate["validate<br/>fetches suite, keeps a copy"]
                 setup["setup (once)"]
                 workers["workers x N<br/>Indexed Job, /metrics :9464"]
                 report["report (merge)"]
             end
         end
         subgraph nsminio["namespace: minio"]
-            minio[("MinIO / S3<br/>bucket perf-results")]
+            minio[("MinIO / S3 bucket perf-results<br/>test-plans/ (suites) + runs/ (results)")]
         end
         prom["Prometheus + Grafana<br/>(optional)"]
     end
@@ -34,20 +34,21 @@ flowchart LR
         dbs[("Databases<br/>Oracle, PostgreSQL, ... via JDBC")]
     end
 
-    tester -->|"browser, HTTPS"| ingress --> dashboard
-    tester --> cli
+    tester -->|"browser, HTTPS: test plans,<br/>runs, live view, reports"| ingress --> dashboard
+    dev --> cli
     ci --> cli
     dev -->|"mvn install, docker build, helm"| k8s
-    cli -->|"kubectl: LoadTest, ConfigMap"| crd
-    cli -->|"perf run (local load)"| apis
+    cli -->|"kubectl: LoadTest"| crd
+    cli -->|"perf run (local debug load)"| apis
     dashboard -->|"create / list / delete"| crd
+    dashboard -->|"suites: upload, edit, delete<br/>results: read, delete"| minio
     operator -->|"watches"| crd
     operator -->|"creates Jobs, reads results"| jobs
-    validate & setup & workers & report -.->|"clone tests"| git
+    validate -->|"suite -> run's tests copy"| minio
+    setup & workers & report -->|"read tests copy;<br/>shared lists, logs, report"| minio
+    validate & workers -.->|"or clone (CI / GitOps)"| git
     workers -->|"load"| apis
     workers -->|"load"| dbs
-    setup & workers & report -->|"shared lists, logs, report, summaries"| minio
     dashboard -->|"live metrics"| workers
-    dashboard -->|"summaries, reports"| minio
     prom -.->|"scrape"| workers
     cli -->|"perf fetch"| minio

@@ -13,9 +13,32 @@ gatling-api-core ──► gatling-sql ──┐
 | 1 | `gatling-api-core` v1.1 — hardening | ✅ done, incl. end-to-end test of every step type (`FeatureRunSpec`) | S–M |
 | 2 | `gatling-sql` | ✅ done incl. `batch` (verified on Derby; Oracle not yet tried on a real DB) | M |
 | 3 | `gatling-runner` | ✅ done: `perf` incl. `submit`/`status`, `s3://` results (verified on MinIO), Dockerfile image (verified) | M |
-| 4 | `loadtest-operator` | ✅ done — **verified on a real cluster** (minikube, Helm-installed); S3 results, printer columns, leader election added after | L |
-| 6 | `perf-dashboard` (web UI) | ✅ v1 — verified on Docker Desktop Kubernetes: runs started from it, live per-worker metrics, final summaries, reports from MinIO | M |
+| 4 | `loadtest-operator` | ✅ done — **verified on a real cluster** (minikube, Helm-installed); S3 results, printer columns, leader election added after; tests from S3 suites with a per-run copy (`plan.s3`) | L |
+| 6 | `perf-dashboard` (web UI) | ✅ v1 — verified on Docker Desktop Kubernetes: runs started from it, live per-worker metrics, final summaries, reports from MinIO; **test plans kept in MinIO** (upload, edit, run) and deleting runs / results | M |
 | 5 | Platform — live metrics, result storage | ✅ live metrics + Grafana dashboard; S3/MinIO results | S–M |
+
+### Status — 2026-11-18
+
+73 JVM tests (core 38, SQL 7, runner 16, operator 12) + 50 dashboard tests. Target platform: **on-prem
+Kubernetes** (the company uses Argo CD); results and test plans in **MinIO**.
+
+New since 2026-11-17 — **test plans without Git**:
+- the dashboard's *Test plans* page keeps suites of test files in `s3://perf-results/test-plans/<suite>/`
+  (create with a starter plan, upload files / folder / zip, edit YAML and CSV, download, delete);
+- *New run* takes a suite + plan (Git and ConfigMap are no longer offered in the dashboard; the operator still
+  accepts them for `perf submit`, CI and GitOps);
+- operator `plan.s3`: the validate pod copies the suite into `<run folder>/tests` (`perf fetch --snapshot`), all
+  later pods read that copy — editing a plan never changes a running test;
+- deleting results: History → Delete, and *also delete results in S3* on a run; refused while the run is active.
+
+Verified on Docker Desktop Kubernetes: the sample suite uploaded as a zip through the dashboard, a 3-worker run
+from it Completed / Passed (246 requests = 79 + 79 + 88 per worker; validate made the copy, setup and all
+workers read it), report opened through the dashboard; a second run's results delete was refused while it ran,
+then removed 50 objects, its report returned 404 and the first run was untouched.
+
+Found: the **Git source's clone init container fails** on Docker Desktop with `detected dubious ownership in
+repository at '/tests'` (the tests volume is owned by root, git runs as uid 1000). Not fixed yet (one line:
+`git config --global --add safe.directory /tests`); S3 test plans are not affected.
 
 ### Status — 2026-11-17
 
@@ -36,13 +59,16 @@ limit still applies). Verified: `docker run --cpus=1 ... run` hung before, compl
 
 | Open | Needs |
 |---|---|
-| perf-dashboard: login (OIDC), run comparison, PVC results | design decision |
+| perf-dashboard: login (OIDC) — needed before shared use, since anyone with the URL can edit plans and delete results; run comparison; PVC results | design decision (or SSO in front: oauth2-proxy) |
+| Test plans: edit history (MinIO bucket versioning, or keep N versions), a "Validate" button running the real plan check, syntax-highlighting editor | decision + small change |
+| Git source: `safe.directory` fix for the clone init container (fails where the tests volume is owned by root) | one line + test |
+| Company adoption: imagePullSecrets / serviceAccount for run pods, operator-wide defaults, namespace-scoped mode, Argo CD health check for `LoadTest` | small changes (see the Argo CD notes) |
 | Spreading workers one per node on multi-node clusters (anti-affinity / topology spread) - not built yet | decision + small change |
 | Oracle-specific behaviour (REF CURSOR, PL/SQL OUT params, driver settings) - distributed SQL on a real DB | a dev Oracle database (or the Oracle Free container) |
 | Grafana dashboard in a real Grafana + Prometheus | a Grafana/Prometheus instance |
 | CI examples (`docs/ci/`) in a real Jenkins / GitLab | the team's CI |
 | LoadRunner: a real team script through `perf convert-lr`, numbers compared with LoadRunner's | a VuGen script + a LoadRunner run of the same scenario |
-| First run on the production on-prem cluster | registry, storage choice (NFS RWX or MinIO), access |
+| First run on the production on-prem cluster | registry, MinIO bucket + credentials, access |
 
 ---
 
@@ -172,23 +198,25 @@ image, item 7 (OS tuning guidance), item 8 (CI examples).
 Java 17, Java Operator SDK on the fabric8 client, CRD generated from Java classes, Helm chart.
 
 ```yaml
-apiVersion: perf.codelabuk.org/v1
+apiVersion: perf.codelabuk.org/v1alpha1
 kind: LoadTest
-metadata: { name: orders-peak-2026-11-20 }
+metadata: { name: orders-peak-20261120 }
 spec:
   image: registry/labuk-perf-runner:1.2.0
   plan:
-    git: { repo: https://git/perf-tests.git, ref: main, path: plans/orders-peak.yaml, secretRef: git-creds }
-    # alternatives: configMap (small tests only - 1 MB limit) | pvc | baked into the image
+    file: plans/orders-peak.yaml
+    s3: s3://perf-results/test-plans/orders-api        # a suite from the dashboard's Test plans page
+    # alternatives (CI / GitOps): git: { repo, ref, tokenSecret } | configMap (flat, 1 MB) | inImage: true
   workers: 10
   scenarios: [ checkout ]
   env: { BASE_URL: https://sit.api }
   secretRefs: [ perf-db-creds ]
-  resources: { cpu: "2", memory: 4Gi }
-  scheduling: { nodeSelector: { pool: perf-spot } }
-  results: { s3: { endpoint: http://minio:9000, bucket: perf-results } }
-  startDelay: 30s
-  ttlAfterFinished: 1h
+  resources: { limits: { cpu: "2", memory: 4Gi } }
+  nodeSelector: { pool: perf }
+  results: { s3: { url: s3://perf-results/runs, endpoint: http://minio.minio.svc:9000, credentialsSecret: minio-creds } }
+  metrics: { enabled: true }
+  startDelaySeconds: 30
+  ttlSecondsAfterFinished: 3600
 ```
 
 | Phase | Operator action |
@@ -209,7 +237,8 @@ twice, and one merged report with the right SLA verdict.
 **Status (v1):** Java 17, JOSDK 5.1.1 / fabric8 7.3.1. `LoadTest` CRD (`perf.codelabuk.org/v1alpha1`, short
 name `lt`) generated from Java; lifecycle Validating → Setup → Starting → Running → Aggregating →
 Completed/Failed with facts passed back through termination messages (`perf validate/report --facts-file`);
-plan from Git / ConfigMap / image; results on an existing PVC; owner references, TTL, no retries, non-root;
+plan from an S3 suite (copied into the run folder by the validate pod) / Git / ConfigMap / image; results in
+S3/MinIO or on an existing PVC; owner references, TTL, no retries, non-root;
 manifests in `deploy/`. Verified: 9 tests (whole lifecycle against fabric8's mock API server, failure paths,
 idempotency, pod details, manifests parse) + the runner's env-driven worker path (`JOB_COMPLETION_INDEX`).
 **Not done / open:**
@@ -218,8 +247,14 @@ idempotency, pod details, manifests parse) + the runner's env-driven worker path
   a pod that pulls its image slower than the delay starts late (it logs a warning).
 - ✅ Helm chart `charts/loadtest-operator` (CRD in `crds/`, kept identical to the generated one by the build;
   RBAC, Deployment with non-root + read-only root filesystem; values for image, resources, scheduling, log level).
-- `perf submit` / `perf status` CLI, printer columns for `kubectl get`, leader election (single replica now).
-- Results only on a PVC (no S3/MinIO upload yet); multi-node clusters need a ReadWriteMany storage class.
+- ✅ `perf submit` / `perf status` CLI, printer columns for `kubectl get`, leader election (2 replicas verified:
+  one holds the Lease and creates all Jobs).
+- ✅ Results in S3/MinIO (`results.s3`) — no shared volume needed; a PVC still works (ReadWriteMany on
+  multi-node clusters).
+- ✅ Tests from S3 suites (`plan.s3`): `fetch-tests` init container with the runner image; validate snapshots
+  the suite into `<run folder>/tests`, later pods read the snapshot. Verified on Docker Desktop (3 workers).
+- Workers are not spread one per node yet (anti-affinity / topology spread).
+- Git source fails where the tests volume is owned by root (`safe.directory` fix pending).
 
 ---
 
@@ -227,17 +262,35 @@ idempotency, pod details, manifests parse) + the runner's env-driven worker path
 
 | Part | Choice |
 |---|---|
-| Result storage | MinIO (S3-compatible) or the cloud's bucket, with expiry rules |
+| Result storage | ✅ MinIO (S3-compatible), one bucket: `runs/` (results) and `test-plans/` (suites); expiry by a lifecycle rule (e.g. `runs/` after 90 days) |
 | Live metrics | ✅ **Done (v1).** Each worker follows its own `simulation.log` while it is written (`LiveLogReader`) and serves Prometheus metrics (`--metrics-port` / `METRICS_PORT`; LoadTest `spec.metrics`), so the numbers equal the report's. Verified: counters grew during a run and ended at 264 = the report's 264; chunked-write test with 5 random cut patterns. Latency = Gatling's log chunk size / write rate (~1 s at high load, up to ~20 s at a few req/s). Grafana dashboard `docs/grafana/perf-dashboard.json` — **valid JSON, not yet tried in a real Grafana/Prometheus**. Note: the reader is tied to Gatling 3.13.1's log format, like the merger. |
 | Server metrics | Existing Prometheus/APM alongside the Gatling dashboard |
 | Load generators | Dedicated (spot) node pool that scales to zero between tests |
 
 ---
 
-## Open decisions
+## 6. `perf-dashboard` — web UI
 
-1. Kubernetes platform (EKS / AKS / GKE / OpenShift / on-prem).
-2. Result storage: MinIO or cloud bucket.
-3. How test files reach pods: Git pull (recommended), baked image, or shared volume.
-4. Oracle versions and features (stored procedures, REF CURSOR?).
-5. Existing metrics stack (Prometheus/Grafana, InfluxDB?).
+Design: [perf-dashboard-design.md](perf-dashboard-design.md). Flask + React, own Helm chart.
+
+| Item | Status |
+|---|---|
+| Runs, Run detail (phases, live cards and charts, per-request tables, workers table, pod logs), reports from MinIO | ✅ v1 |
+| New run form → LoadTest | ✅ v1 — from saved test plans only (since 2026-11-18) |
+| History of run folders with final numbers | ✅ v1 |
+| Test plans: suites in S3 — create, upload (files / folder / zip), edit, download, delete, Run | ✅ 2026-11-18 |
+| Delete runs and their results (History; Run detail with "also delete results") | ✅ 2026-11-18 |
+| Login (OIDC / SSO), audit of who started or deleted what | open |
+| Run-to-run comparison, PVC results, plan edit history | open |
+
+---
+
+## Decisions
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Kubernetes platform | **On-prem Kubernetes**, deployed with Argo CD (company) — verified on Docker Desktop Kubernetes and minikube |
+| 2 | Result storage | **MinIO** (S3-compatible) |
+| 3 | How test files reach pods | **Suites in MinIO, managed on the dashboard** (per-run copy); Git / ConfigMap / image kept for CI and GitOps |
+| 4 | Oracle versions and features (stored procedures, REF CURSOR?) | open — needs a database to verify |
+| 5 | Existing metrics stack | open — Prometheus endpoint per worker and a Grafana dashboard are ready, not yet tried |

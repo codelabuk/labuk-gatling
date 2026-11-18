@@ -1,19 +1,21 @@
 %% 5. Engine internals: from YAML to Gatling
 flowchart LR
-    subgraph inputs["Test files (no code)"]
+    subgraph inputs["Test files (no code) - a suite in S3, or Git for CI"]
         plan["plan.yaml<br/>scenarios, load, SLAs"]
         catalog["apis/*.yaml<br/>API catalog"]
         data["data/*.csv"]
-        env["-DNAME / env vars<br/>fill ${NAME}"]
-        vugen["LoadRunner VuGen script"]
+        env["Variables / env<br/>fill ${NAME}"]
     end
-
+    vugen["LoadRunner VuGen script"]
     conv["perf convert-lr<br/>VuGenConverter"]
-    vugen --> conv --> plan & catalog & data
+    vugen --> conv -->|"upload as a suite"| plan & catalog & data
+
+    fetch["fetch-tests init container<br/>perf fetch -> /tests"]
+    plan & catalog & data --> fetch
 
     loader["PlanLoader<br/>placeholders, includes,<br/>typo + cross checks"]
     model["TestPlan model<br/>steps, auth, load, SLAs"]
-    plan & catalog & data & env --> loader --> model
+    fetch & env --> loader --> model
 
     subgraph assemble["SimulationAssembler (per worker)"]
         split["Worker split<br/>users, rates, CSV rows, shared lists"]

@@ -19,20 +19,21 @@ flowchart TB
             sql_exec["SqlAction, SqlExecutor, Pools (HikariCP)"]
         end
         subgraph runner["gatling-runner (Scala)"]
-            perf["Perf CLI"]
+            perf["Perf CLI<br/>incl. fetch --snapshot"]
             kube["Kube: submit / status"]
             s3["S3 client (SigV4)"]
             lr["lr.VuGenConverter"]
             dist["perf-x.zip + Dockerfile"]
         end
         subgraph operator["loadtest-operator (Java)"]
-            op_crd["LoadTest CRD (generated)"]
+            op_crd["LoadTest CRD (generated)<br/>plan: s3 | git | configMap | inImage"]
             op_flow["LoadTestReconciler, LoadTestFlow"]
-            op_jobs["JobFactory"]
+            op_jobs["JobFactory<br/>fetch-tests / clone-tests init containers"]
         end
         subgraph dashboard["perf-dashboard (Python + TypeScript)"]
-            dash_api["Flask: api, reports, kube, live, storage"]
-            dash_ui["React: Runs, Run detail, New run, History"]
+            dash_api["Flask routes<br/>api (runs, delete), plans, reports"]
+            dash_store["kube, live, storage,<br/>plan_store (suites in S3)"]
+            dash_ui["React<br/>Runs, Run detail, New run,<br/>Test plans, History"]
         end
         subgraph charts["Helm charts"]
             chart_op["charts/loadtest-operator"]
@@ -53,7 +54,9 @@ flowchart TB
     runner --> sql
     perf --> core_cli & core_sim & core_metrics & s3 & kube & lr
     operator --> josdk
+    op_flow --> op_jobs
     op_jobs -.->|"pods run the runner image"| dist
     op_crd -.->|"copied into"| chart_op
-    dash_api -.->|"reads"| op_crd
+    dash_ui --> dash_api --> dash_store
+    dash_store -.->|"reads / creates LoadTests"| op_crd
     chart_dash -.-> dashboard

@@ -35,11 +35,11 @@ Fixed technology choices: Java 17, Scala 2.13.15, **Gatling 3.13.1** (pinned - n
 |---|---|---|---|
 | **gatling-api-core** | Scala | YAML loading and validation, the engine (steps, auth, data, load, SLAs), worker split, log merging, live metrics, run summaries | `gatling-api-core/` |
 | **gatling-sql** | Scala, HikariCP | `sql` steps (query, update, call, batch) and `jdbc` data sources, as plugins | `gatling-sql/` |
-| **gatling-runner** | Scala | The `perf` command: validate, run, setup, worker, report, fetch, submit, status, convert-lr; S3 client; distribution zip and image | `gatling-runner/` |
-| **loadtest-operator** | Java, JOSDK | Watches `LoadTest` resources and runs each as validate → setup → workers → report Jobs | `loadtest-operator/` |
-| **perf-dashboard** | Python Flask, React | Runs, live metrics per worker, final numbers, logs, reports from S3, new runs | `perf-dashboard/` |
+| **gatling-runner** | Scala | The `perf` command: validate, run, setup, worker, report, fetch (with `--snapshot`), submit, status, convert-lr; S3 client; distribution zip and image | `gatling-runner/` |
+| **loadtest-operator** | Java, JOSDK | Watches `LoadTest` resources and runs each as validate → setup → workers → report Jobs; gets the tests into every pod (S3 suite, Git, ConfigMap or image) | `loadtest-operator/` |
+| **perf-dashboard** | Python Flask, React | Test plans (suites in S3: upload, edit), new runs, live metrics per worker, final numbers, logs, reports from S3, deleting runs and their results | `perf-dashboard/` |
 | **Helm charts** | Helm 3 | Install the operator (+ CRD) and the dashboard | `charts/` |
-| **MinIO / S3** | (existing) | Results: shared lists, worker logs and summaries, merged reports | cluster service |
+| **MinIO / S3** | (existing) | One bucket, two areas: `test-plans/` (suites of test files) and `runs/` (per run: test copy, shared lists, worker logs and summaries, merged report) | cluster service |
 
 ---
 
@@ -48,12 +48,12 @@ Fixed technology choices: Java 17, Scala 2.13.15, **Gatling 3.13.1** (pinned - n
 ```mermaid
 %% 1. System context: who uses labuk-gatling and what runs where
 flowchart LR
-    tester(["Perf tester / QA"])
-    ci(["CI pipeline<br/>Jenkins / GitLab"])
+    tester(["Perf tester / QA<br/>browser only"])
+    ci(["CI pipeline / GitOps<br/>Jenkins, GitLab, Argo CD"])
     dev(["Framework developer"])
-    git[("Git repo<br/>YAML plans, API catalog, CSV")]
+    git[("Git repo (optional)<br/>for CI / GitOps runs")]
 
-    subgraph local["Tester's machine"]
+    subgraph local["Developer machine / CI agent"]
         cli["perf CLI<br/>validate | run | submit | status | fetch | convert-lr"]
     end
 
@@ -61,18 +61,18 @@ flowchart LR
         direction TB
         ingress["Ingress (nginx, TLS)<br/>perf-dashboard.codelabuk.dev"]
         subgraph nsperf["namespace: perf"]
-            dashboard["perf-dashboard<br/>Flask API + React UI"]
+            dashboard["perf-dashboard<br/>Runs, New run, Test plans, History"]
             operator["loadtest-operator<br/>2 replicas, leader election"]
             crd[["LoadTest<br/>perf.codelabuk.org/v1alpha1"]]
             subgraph jobs["Jobs of one run"]
-                validate["validate"]
+                validate["validate<br/>fetches suite, keeps a copy"]
                 setup["setup (once)"]
                 workers["workers x N<br/>Indexed Job, /metrics :9464"]
                 report["report (merge)"]
             end
         end
         subgraph nsminio["namespace: minio"]
-            minio[("MinIO / S3<br/>bucket perf-results")]
+            minio[("MinIO / S3 bucket perf-results<br/>test-plans/ (suites) + runs/ (results)")]
         end
         prom["Prometheus + Grafana<br/>(optional)"]
     end
@@ -82,32 +82,38 @@ flowchart LR
         dbs[("Databases<br/>Oracle, PostgreSQL, ... via JDBC")]
     end
 
-    tester -->|"browser, HTTPS"| ingress --> dashboard
-    tester --> cli
+    tester -->|"browser, HTTPS: test plans,<br/>runs, live view, reports"| ingress --> dashboard
+    dev --> cli
     ci --> cli
     dev -->|"mvn install, docker build, helm"| k8s
-    cli -->|"kubectl: LoadTest, ConfigMap"| crd
-    cli -->|"perf run (local load)"| apis
+    cli -->|"kubectl: LoadTest"| crd
+    cli -->|"perf run (local debug load)"| apis
     dashboard -->|"create / list / delete"| crd
+    dashboard -->|"suites: upload, edit, delete<br/>results: read, delete"| minio
     operator -->|"watches"| crd
     operator -->|"creates Jobs, reads results"| jobs
-    validate & setup & workers & report -.->|"clone tests"| git
+    validate -->|"suite -> run's tests copy"| minio
+    setup & workers & report -->|"read tests copy;<br/>shared lists, logs, report"| minio
+    validate & workers -.->|"or clone (CI / GitOps)"| git
     workers -->|"load"| apis
     workers -->|"load"| dbs
-    setup & workers & report -->|"shared lists, logs, report, summaries"| minio
     dashboard -->|"live metrics"| workers
-    dashboard -->|"summaries, reports"| minio
     prom -.->|"scrape"| workers
     cli -->|"perf fetch"| minio
 ```
 
 <sub>Source: [`architecture/01-system-context.mmd`](architecture/01-system-context.mmd) · PlantUML: [`architecture/01-system-context.puml`](architecture/01-system-context.puml)</sub>
 
-Testers start runs from the **dashboard** (browser) or the **`perf` CLI**; CI uses the CLI. Either way a
-`LoadTest` resource is created in Kubernetes. The **operator** turns it into Jobs whose pods run the **perf
-runner image**: they clone the tests from Git (or mount a ConfigMap), load the **systems under test**, and
-write everything to **MinIO**. The dashboard reads the cluster (status, pods, logs), the workers (live
-metrics) and MinIO (final numbers, reports). Prometheus/Grafana can scrape the same worker metrics.
+**Testers use only the dashboard** (a browser): they keep their test files as **suites in MinIO**
+(`test-plans/<suite>/`) on the *Test plans* page, start runs, watch them live and open the reports. The **`perf`
+CLI** is for framework developers (local debug runs, `perf convert-lr` for LoadRunner scripts) and for CI
+pipelines; GitOps can apply a `LoadTest` from Git. CLI and GitOps runs may take the tests from a Git repository
+instead. Either way a `LoadTest` resource is
+created in Kubernetes. The **operator** turns it into Jobs whose pods run the **perf runner image**: the validate
+pod fetches the suite and stores a **copy in the run folder**, every later pod reads that copy, the workers load
+the **systems under test**, and everything is written to **MinIO**. The dashboard reads the cluster (status,
+pods, logs), the workers (live metrics) and MinIO (final numbers, reports), and can delete finished runs and
+their results. Prometheus/Grafana can scrape the same worker metrics.
 
 ---
 
@@ -135,20 +141,21 @@ flowchart TB
             sql_exec["SqlAction, SqlExecutor, Pools (HikariCP)"]
         end
         subgraph runner["gatling-runner (Scala)"]
-            perf["Perf CLI"]
+            perf["Perf CLI<br/>incl. fetch --snapshot"]
             kube["Kube: submit / status"]
             s3["S3 client (SigV4)"]
             lr["lr.VuGenConverter"]
             dist["perf-x.zip + Dockerfile"]
         end
         subgraph operator["loadtest-operator (Java)"]
-            op_crd["LoadTest CRD (generated)"]
+            op_crd["LoadTest CRD (generated)<br/>plan: s3 | git | configMap | inImage"]
             op_flow["LoadTestReconciler, LoadTestFlow"]
-            op_jobs["JobFactory"]
+            op_jobs["JobFactory<br/>fetch-tests / clone-tests init containers"]
         end
         subgraph dashboard["perf-dashboard (Python + TypeScript)"]
-            dash_api["Flask: api, reports, kube, live, storage"]
-            dash_ui["React: Runs, Run detail, New run, History"]
+            dash_api["Flask routes<br/>api (runs, delete), plans, reports"]
+            dash_store["kube, live, storage,<br/>plan_store (suites in S3)"]
+            dash_ui["React<br/>Runs, Run detail, New run,<br/>Test plans, History"]
         end
         subgraph charts["Helm charts"]
             chart_op["charts/loadtest-operator"]
@@ -169,9 +176,11 @@ flowchart TB
     runner --> sql
     perf --> core_cli & core_sim & core_metrics & s3 & kube & lr
     operator --> josdk
+    op_flow --> op_jobs
     op_jobs -.->|"pods run the runner image"| dist
     op_crd -.->|"copied into"| chart_op
-    dash_api -.->|"reads"| op_crd
+    dash_ui --> dash_api --> dash_store
+    dash_store -.->|"reads / creates LoadTests"| op_crd
     chart_dash -.-> dashboard
 ```
 
@@ -189,9 +198,9 @@ flowchart TB
 | `core/cli` | `Validate`, `Merge` |
 | `core/plugin` | Extension points `StepPlugin`, `DataSourcePlugin` (Java `ServiceLoader`) |
 | `gatling-sql` | `SqlStepPlugin`, `JdbcDataSourcePlugin`, `SqlAction` (own thread pool), `SqlExecutor`, `Pools` |
-| `gatling-runner` | `Perf` (CLI), `Kube` (submit/status via kubectl), `S3` (SigV4 client), `lr.VuGenConverter`, `Facts` |
-| `loadtest-operator` | `LoadTest` CRD classes, `LoadTestReconciler`, `LoadTestFlow` (state machine), `JobFactory` |
-| `perf-dashboard` | `routes/api.py`, `routes/reports.py`, `kube.py`, `live.py`, `storage.py`; React pages |
+| `gatling-runner` | `Perf` (CLI; `fetch --snapshot` copies a test folder into the run folder), `Kube` (submit/status via kubectl), `S3` (SigV4 client), `lr.VuGenConverter`, `Facts` |
+| `loadtest-operator` | `LoadTest` CRD classes (plan sources `s3`, `git`, `configMap`, `inImage`), `LoadTestReconciler`, `LoadTestFlow` (state machine), `JobFactory` (Jobs, `fetch-tests` / `clone-tests` init containers) |
+| `perf-dashboard` | `routes/api.py` (runs, delete), `routes/plans.py` (suites), `routes/reports.py`; `kube.py`, `live.py`, `storage.py`, `plan_store.py`; React pages Runs, Run detail, New run, Test plans, History |
 
 Dependencies point one way: `gatling-runner → gatling-sql → gatling-api-core → Gatling`. The operator does not
 link the engine — it starts pods from the runner image. The dashboard talks to the Kubernetes API, the worker
@@ -204,12 +213,18 @@ pods and S3, never to the engine directly.
 A test is data, not code:
 
 ```
-perf-tests/                      (any Git repository, or a ConfigMap for small flat sets)
+s3://perf-results/test-plans/orders-api/     a suite (Test plans page) - or a Git repository for CI / GitOps
 ├── apis/orders.yaml             API catalog: each request defined once (method, path, headers, body, checks, extract)
 ├── data/users.csv               test data, one row per virtual user (queue / circular / random / shuffle)
 ├── bodies/create-order.json     request bodies with #{variables}
 └── plans/orders-peak.yaml       scenarios (steps), load profile, auth, setup, SLAs
 ```
+
+- **Suites**: a suite is a folder of test files laid out like a test repository, so `include:` and data paths
+  (relative to the file they are written in) work the same everywhere. The *Test plans* page creates suites (with
+  a starter plan), uploads files, a folder or a zip (folders kept), edits YAML/CSV in the browser (YAML syntax is
+  checked on save), downloads a suite as zip and deletes files or suites. A YAML file with `scenarios:` is offered
+  as a plan on *New run*.
 
 - **Steps**: `api`, `sql`, `transaction`, `pollUntil`, `forEach`, `repeat`, `loop`, `if`, `randomSwitch`,
   `retry`, `wait`, `pace`, `rendezvous`, `set`, `feed`, `log`, `stopUserIfFailed`.
@@ -227,20 +242,22 @@ perf-tests/                      (any Git repository, or a ConfigMap for small f
 ```mermaid
 %% 5. Engine internals: from YAML to Gatling
 flowchart LR
-    subgraph inputs["Test files (no code)"]
+    subgraph inputs["Test files (no code) - a suite in S3, or Git for CI"]
         plan["plan.yaml<br/>scenarios, load, SLAs"]
         catalog["apis/*.yaml<br/>API catalog"]
         data["data/*.csv"]
-        env["-DNAME / env vars<br/>fill ${NAME}"]
-        vugen["LoadRunner VuGen script"]
+        env["Variables / env<br/>fill ${NAME}"]
     end
-
+    vugen["LoadRunner VuGen script"]
     conv["perf convert-lr<br/>VuGenConverter"]
-    vugen --> conv --> plan & catalog & data
+    vugen --> conv -->|"upload as a suite"| plan & catalog & data
+
+    fetch["fetch-tests init container<br/>perf fetch -> /tests"]
+    plan & catalog & data --> fetch
 
     loader["PlanLoader<br/>placeholders, includes,<br/>typo + cross checks"]
     model["TestPlan model<br/>steps, auth, load, SLAs"]
-    plan & catalog & data & env --> loader --> model
+    fetch & env --> loader --> model
 
     subgraph assemble["SimulationAssembler (per worker)"]
         split["Worker split<br/>users, rates, CSV rows, shared lists"]
@@ -301,7 +318,7 @@ exactly this way. Plugins can declare report names so SLAs can target their step
 sequenceDiagram
     autonumber
     actor T as Tester
-    participant D as perf-dashboard / perf submit
+    participant D as perf-dashboard
     participant K as Kubernetes API
     participant O as loadtest-operator
     participant V as validate pod
@@ -311,21 +328,25 @@ sequenceDiagram
     participant M as MinIO / S3
     participant SUT as APIs / DBs
 
-    T->>D: New run (plan, workers, env)
-    D->>K: create LoadTest
+    T->>D: Test plans: create / upload / edit a suite
+    D->>M: test-plans/suite/... (YAML syntax checked)
+    T->>D: New run (suite, plan, workers, env)
+    D->>K: create LoadTest (plan.s3 = test-plans/suite)
     O->>K: reconcile (every 5 s)
     O->>K: create Job "validate"
-    K->>V: start (init: git clone tests)
+    K->>V: start (init: fetch-tests)
+    V->>M: fetch suite, store copy in runs/run/tests
     V->>V: perf validate --facts-file /dev/termination-log
     V-->>O: facts: valid, hasSetup, scenarios
     alt plan has setup.share
         O->>K: create Job "setup"
+        S->>M: fetch tests copy
         S->>SUT: setup steps (e.g. login, load list)
         S->>M: shared.json
     end
     O->>K: create Indexed Job "workers" (START_AT = now + delay)
     K->>W: N pods (JOB_COMPLETION_INDEX = worker number)
-    W->>M: read shared.json (if any)
+    W->>M: fetch tests copy, read shared.json (if any)
     W->>W: wait for START_AT
     loop during the test
         W->>SUT: load (users / rates divided by N)
@@ -333,13 +354,18 @@ sequenceDiagram
     end
     W->>M: logs/worker-i.log + worker-i.json
     O->>K: create Job "report" (all workers succeeded)
-    R->>M: download logs
+    R->>M: fetch tests copy, download logs
     R->>R: LogMerger + Gatling reports-only (SLAs on all data)
     R->>M: report/merged/* + report/summary.json
     R-->>O: facts: reportBuilt, slaPassed, report path
     O->>K: status Completed, result Passed / SLAFailed
     D->>M: summary.json, worker-*.json, report files
     D-->>T: final numbers + Open report
+    opt clean-up (finished runs only)
+        T->>D: Delete run (+ results) / History: Delete
+        D->>K: delete LoadTest (Jobs, pods go with it)
+        D->>M: delete runs/run/ (logs, report, tests copy)
+    end
 ```
 
 <sub>Source: [`architecture/03-run-lifecycle.mmd`](architecture/03-run-lifecycle.mmd) · PlantUML: [`architecture/03-run-lifecycle.puml`](architecture/03-run-lifecycle.puml)</sub>
@@ -362,8 +388,13 @@ Design points:
   fails the run with the reason.
 - **Leader election** (a Lease in the operator's namespace) — two operator replicas are safe; one works.
 - **Ownership** — every Job is owned by its LoadTest: deleting the LoadTest stops and removes the run.
-- **Tests from Git** (init container fetches a branch, tag or commit), a **ConfigMap** (small, flat, 1 MB) or
-  **baked into the image**. Secrets reach pods only as environment variables from Kubernetes Secrets.
+- **Tests in every pod** — `plan.s3` (a suite in S3; the dashboard's only source): the validate pod's
+  `fetch-tests` init container runs `perf fetch <suite> /tests --snapshot <run folder>/tests`; setup, workers and
+  report fetch that copy. Editing a suite therefore never changes a running test, and the run folder shows exactly
+  what ran. It uses the endpoint and credentials of `results.s3`. For CI and GitOps the operator also takes
+  **Git** (init container fetches a branch, tag or commit), a **ConfigMap** (small, flat, 1 MB; what
+  `perf submit --from-dir` creates) or tests **baked into the image**.
+- **Secrets** reach pods only as environment variables from Kubernetes Secrets.
 
 The same sequence works without Kubernetes: `perf setup`, N × `perf worker` with `WORKER_INDEX` /
 `WORKER_COUNT` / `START_AT`, then `perf report`.
@@ -373,8 +404,12 @@ The same sequence works without Kubernetes: `perf setup`, N × `perf worker` wit
 ## 6. Results and metrics
 
 ```mermaid
-%% 4. Results and metrics: live while running, exact when finished
+%% 4. Test files in, results out: live while running, exact when finished
 flowchart LR
+    subgraph plans["MinIO / S3: perf-results/test-plans/suite/"]
+        suite["plans/*.yaml, apis/*.yaml,<br/>data/*.csv, bodies/*"]
+    end
+
     subgraph worker["each worker pod"]
         engine["Gatling engine"]
         log[("simulation.log<br/>binary, written in chunks")]
@@ -386,6 +421,7 @@ flowchart LR
     end
 
     subgraph store["MinIO / S3: perf-results/runs/run-folder/"]
+        tests["tests/<br/>copy of the suite taken by validate"]
         shared["shared.json"]
         logs["logs/worker-i.log<br/>logs/worker-i.json"]
         html["report/merged/index.html ..."]
@@ -400,6 +436,8 @@ flowchart LR
         merger --> rsum
     end
 
+    suite -->|"validate: fetch --snapshot"| tests
+    tests -->|"fetch-tests"| engine
     log -->|"upload"| logs
     wsum -->|"upload"| logs
     logs --> merger
@@ -408,11 +446,13 @@ flowchart LR
 
     dash["perf-dashboard"]
     prom["Prometheus / Grafana"]
+    dash -->|"Test plans: upload, edit"| suite
     metrics -->|"live, summed across workers"| dash
     metrics -.-> prom
     logs -->|"per-worker final"| dash
     summary -->|"run final"| dash
     html -->|"/reports/... in the browser"| dash
+    dash -.->|"delete run folder"| store
 ```
 
 <sub>Source: [`architecture/04-results-flow.mmd`](architecture/04-results-flow.mmd) · PlantUML: [`architecture/04-results-flow.puml`](architecture/04-results-flow.puml)</sub>
@@ -421,6 +461,7 @@ flowchart LR
 
 ```
 perf-results/runs/<run>-<uid8>/
+├── tests/                          copy of the suite taken by the validate pod (runs from S3 plans)
 ├── shared.json                     setup's lists (when the plan has setup)
 ├── logs/worker-<i>.log             each worker's Gatling log (binary)
 ├── logs/worker-<i>.json            each worker's final numbers
@@ -449,8 +490,11 @@ perf-results/runs/<run>-<uid8>/
 | Live view | Backend scrapes every running worker's `/metrics` in parallel and sums them; the browser turns successive samples into rates. The last numbers of finished workers are remembered so totals never decrease (one gunicorn process, threads for concurrency) |
 | Final view | `summary.json` + `worker-*.json` from S3 — available after the pods are gone |
 | Reports | `/reports/<key>` streams the report files from S3; only keys under the results prefix, `..` rejected |
-| Starting runs | `POST /api/loadtests` builds and validates a LoadTest (Git or ConfigMap plan, workers, resources, env, secrets) |
+| Test plans | `/api/plans/...`: list / create / delete suites, list / read / save / delete files, upload (multipart; zips unpacked, a single top folder removed, hidden files skipped), download as zip. Paths are checked so nothing can leave its suite (`..`, absolute paths, hostile zip entries); an upload is checked completely before anything is written |
+| Starting runs | `POST /api/loadtests` builds and validates a LoadTest from a **saved suite** (the plan file must exist in it), workers, resources, env, secrets. Git / ConfigMap sources are not offered here |
+| Deleting | `DELETE /api/loadtests/<ns>/<name>` removes the LoadTest (Jobs, pods); `?results=true` also removes its run folder. `DELETE /api/runs/<folder>` (History) removes a run folder. Both are refused (409) while the run is active |
 | Access to the cluster | A ClusterRole: LoadTests get/list/watch/create/delete, Jobs get/list, Pods and logs get/list |
+| Access to S3 | One credentials Secret: read/write/delete on `test-plans/`, read/delete on `runs/` |
 
 ---
 
@@ -475,22 +519,22 @@ flowchart TB
             op["Deployment loadtest-operator<br/>+ ServiceAccount, ClusterRole,<br/>Lease Role (leader election)"]
             dash["Deployment perf-dashboard<br/>+ Service, ClusterRole"]
             ing["Ingress perf-dashboard<br/>TLS: perf-dashboard-tls"]
-            sec["Secrets: minio-creds,<br/>perf-secrets, git-creds"]
-            runs["Jobs + pods per LoadTest<br/>(runner image)"]
+            sec["Secrets: minio-creds, perf-secrets,<br/>git-creds (Git runs only)"]
+            runs["Jobs + pods per LoadTest<br/>(runner image, also fetch-tests)"]
         end
         subgraph miniofs["namespace: minio"]
-            minio[("MinIO<br/>bucket perf-results")]
+            minio[("MinIO bucket perf-results<br/>test-plans/ + runs/")]
         end
         ingressctl["ingress-nginx"]
     end
 
     helm_op["helm: charts/loadtest-operator"] --> op & crd
-    helm_dash["helm: charts/perf-dashboard"] --> dash & ing
+    helm_dash["helm: charts/perf-dashboard<br/>results.url, results.plansUrl"] --> dash & ing
     registry -.-> op & dash & runs
     ingressctl --> ing --> dash
     op --> runs
-    runs --> minio
-    dash --> minio
+    runs -->|"tests copy, results"| minio
+    dash -->|"suites read/write,<br/>results read/delete"| minio
     sec -.-> runs & dash
     browser(["Browser"]) -->|"https://perf-dashboard.codelabuk.dev"| ingressctl
 ```
@@ -508,9 +552,19 @@ flowchart TB
 **Configuration** is environment-based throughout: the runner reads `PLAN`, `WORKER_INDEX` /
 `JOB_COMPLETION_INDEX`, `WORKER_COUNT`, `START_AT`, `SHARED_IN`, `RESULTS_DIR`, `METRICS_PORT`, S3 variables
 (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `S3_ENDPOINT`) and any `${NAME}` the plan uses.
+The dashboard reads `WATCH_NAMESPACES`, `RESULTS_URL`, `PLANS_URL` (chart: `results.url`, `results.plansUrl`),
+`S3_ENDPOINT`, the S3 credentials and the defaults for new runs (`DEFAULT_IMAGE`, `DEFAULT_S3_SECRET`).
 
-**Storage choice on-prem**: either MinIO/S3 (`results.s3`, no shared volume needed — recommended) or a
-ReadWriteMany volume such as NFS (`results.pvc`).
+**Storage choice on-prem**: MinIO/S3 (`results.s3`, no shared volume needed — recommended, and required for
+saved test plans and the dashboard's numbers) or a ReadWriteMany volume such as NFS (`results.pvc`).
+
+```
+s3://perf-results/
+├── test-plans/<suite>/...         suites (Test plans page)
+└── runs/<run>-<uid8>/...          one folder per run (see Results and metrics)
+```
+
+For routine clean-up prefer a bucket lifecycle rule (e.g. expire `runs/` after 90 days) over deleting by hand.
 
 ---
 
@@ -523,8 +577,10 @@ ReadWriteMany volume such as NFS (`results.pvc`).
 | RBAC | Operator: LoadTests, Jobs, Pods (read), Leases in its namespace. Dashboard: LoadTests incl. create/delete, Jobs and Pods read |
 | Writes to databases | `sql` update/call/batch steps are refused unless the connection has `allowWrites: true`; `rollback: true` measures writes without keeping them |
 | Report serving | Only objects under the results prefix; path traversal rejected |
+| Test plans | Suite and file names checked (no `..`, absolute or hidden paths, hostile zip entries); file size limit (20 MB, configurable); uploads checked completely before anything is written |
+| Deleting results | Only folders under the results prefix; refused while the run is active; cannot be undone |
 | Outbound data | Gatling usage analytics disabled |
-| **Gap** | The dashboard has **no login** (v1) — keep it behind the ingress / network rules; SSO is on the roadmap |
+| **Gap** | The dashboard has **no login** (v1): anyone who can open it can edit test plans and delete results — keep it behind the ingress / network rules (or SSO in front of it); SSO is on the roadmap |
 
 ---
 
@@ -543,6 +599,9 @@ ReadWriteMany volume such as NFS (`results.pvc`).
 | Own S3 client (SigV4) | Avoids the large AWS SDK; MinIO-friendly | Access keys only (no IRSA / web identity) |
 | SQL on its own thread pool | JDBC blocks | Accurate HTTP timings next to SQL load |
 | Dockerfiles alongside Jib | Jib's hand-off to Docker Desktop stalled on the dev laptop | Both paths documented; Dockerfiles verified |
+| Test plans in S3, managed by the dashboard | Testers should not need Git or a push for every change; the bucket is already there | Git stays available to CI / GitOps through the operator |
+| Per-run copy of the tests, taken by the validate pod | A run must not change if a plan is edited while it runs; the run folder name (`<name>-<uid>`) only exists once the LoadTest is created, so the dashboard cannot copy reliably before the pods start | Every run folder shows exactly what ran; works for `perf submit` / kubectl runs too |
+| Results kept when a run is deleted (unless asked) | Results are the record; the LoadTest is only cluster state | Explicit "also delete results" / History delete; lifecycle rules for routine clean-up |
 
 ---
 
@@ -551,7 +610,12 @@ ReadWriteMany volume such as NFS (`results.pvc`).
 - Workers are not yet spread one per node (no anti-affinity / topology spread) — on multi-node clusters
   several workers may share a node.
 - `rendezvous` waits per worker; small `throttle` targets are rounded per worker (minimum 1 rps each).
-- ConfigMap test sets are flat (no sub-folders) and limited to 1 MB — use Git for real test sets.
+- ConfigMap test sets (`perf submit --from-dir`) are flat (no sub-folders) and limited to 1 MB.
+- Saving a test file checks YAML syntax only; the full plan check (APIs, data files, SLA targets) runs in the run's
+  validate step. There is no edit history apart from the per-run copies — enable MinIO bucket versioning for that.
+- The Git source's clone init container fails on clusters where the tests volume is owned by root while git runs
+  as uid 1000 (`detected dubious ownership`, seen on Docker Desktop) — a one-line `safe.directory` fix is pending;
+  it does not affect S3 test plans.
 - The dashboard reads results from S3 only; runs with `results.pvc` show status and pods but no numbers.
 - Oracle-specific behaviour (REF CURSOR, PL/SQL OUT parameters) is implemented but not yet verified on a real
   Oracle database.
