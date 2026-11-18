@@ -82,6 +82,9 @@ public class LoadTestSpec {
 
         @JsonPropertyDescription("The tests are baked into the image; `file` is an absolute path")
         public boolean inImage;
+
+        @JsonPropertyDescription("Download the tests from S3 / MinIO (s3://bucket/folder) with the endpoint and credentials of results.s3")
+        public String s3;
     }
 
     public static class Git {

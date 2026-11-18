@@ -63,8 +63,11 @@ public final class JobFactory {
         if (spec == null) return "spec is missing";
         if (spec.image == null || spec.image.isBlank()) return "spec.image is required";
         if (spec.plan == null || spec.plan.file == null || spec.plan.file.isBlank()) return "spec.plan.file is required";
-        int sources = (spec.plan.git != null ? 1 : 0) + (spec.plan.configMap != null ? 1 : 0) + (spec.plan.inImage ? 1 : 0);
-        if (sources != 1) return "spec.plan needs exactly one of: git, configMap, inImage";
+        int sources = (spec.plan.git != null ? 1 : 0) + (spec.plan.configMap != null ? 1 : 0) + (spec.plan.inImage ? 1 : 0)
+                + (spec.plan.s3 != null ? 1 : 0);
+        if (sources != 1) return "spec.plan needs exactly one of: git, configMap, inImage, s3";
+        if (spec.plan.s3 != null && !spec.plan.s3.startsWith("s3://")) return "spec.plan.s3 must look like s3://bucket/folder";
+        if (spec.plan.s3 != null && !usesS3(spec)) return "spec.plan.s3 needs results.s3 (its endpoint and credentials are used)";
         if (spec.plan.inImage && !spec.plan.file.startsWith("/")) return "spec.plan.file must be an absolute path when inImage is true";
         if (spec.workers < 1) return "spec.workers must be at least 1";
         boolean pvc = spec.results != null && spec.results.pvc != null && !spec.results.pvc.isBlank();
@@ -162,10 +165,13 @@ public final class JobFactory {
         if (spec.plan.git != null) {
             volumes.add(new VolumeBuilder().withName("tests").withNewEmptyDir().endEmptyDir().build());
             init.add(gitClone(spec.plan.git));
+        } else if (spec.plan.s3 != null) {
+            volumes.add(new VolumeBuilder().withName("tests").withNewEmptyDir().endEmptyDir().build());
+            init.add(s3Fetch(lt, role, env, envFrom));
         } else if (spec.plan.configMap != null) {
             volumes.add(new VolumeBuilder().withName("tests").withNewConfigMap().withName(spec.plan.configMap).endConfigMap().build());
         }
-        if (!spec.plan.inImage) mounts.add(new VolumeMountBuilder().withName("tests").withMountPath(TESTS).withReadOnly(spec.plan.git == null).build());
+        if (!spec.plan.inImage) mounts.add(new VolumeMountBuilder().withName("tests").withMountPath(TESTS).withReadOnly(spec.plan.configMap != null).build());
 
         Container perf = new ContainerBuilder()
                 .withName("perf")
@@ -205,6 +211,31 @@ public final class JobFactory {
                                 .build())
                     .endTemplate()
                 .endSpec()
+                .build();
+    }
+
+    /** Where the pods of a run read their tests when they come from S3: a copy in the run folder, made by validate. */
+    public static String testsSnapshot(LoadTest lt) {
+        return runDir(lt) + "/tests";
+    }
+
+    /**
+     * Downloads the test folder from S3 with the runner image itself (perf fetch) - same credentials as the results.
+     * The validate pod fetches spec.plan.s3 and stores a copy in the run folder; every later pod reads that copy, so a
+     * plan edited during the run cannot change it halfway and the run folder shows exactly what ran.
+     */
+    private static Container s3Fetch(LoadTest lt, Role role, List<EnvVar> env, List<EnvFromSource> envFrom) {
+        LoadTestSpec spec = lt.getSpec();
+        List<String> args = role == Role.validate
+                ? List.of("fetch", spec.plan.s3, TESTS, "--snapshot", testsSnapshot(lt))
+                : List.of("fetch", testsSnapshot(lt), TESTS);
+        return new ContainerBuilder()
+                .withName("fetch-tests")
+                .withImage(spec.image)
+                .withArgs(args)
+                .withEnv(env.stream().filter(e -> e.getName().startsWith("AWS_") || e.getName().equals("S3_ENDPOINT")).toList())
+                .withEnvFrom(envFrom.stream().filter(e -> e.getSecretRef().getName().equals(spec.results.s3.credentialsSecret)).toList())
+                .withVolumeMounts(new VolumeMountBuilder().withName("tests").withMountPath(TESTS).build())
                 .build();
     }
 

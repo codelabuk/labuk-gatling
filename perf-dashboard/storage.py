@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
 from minio import Minio
+from minio.deleteobjects import DeleteObject
 from minio.error import S3Error
 
 import config
@@ -94,3 +95,27 @@ def report_object(key):
     bucket, _ = config.results_bucket_and_prefix()
     resp = _minio().get_object(bucket, key)
     return resp, int(resp.headers.get("Content-Length", 0) or 0)
+
+
+def delete_prefix(bucket, prefix):
+    """Deletes every object under prefix (which must end with '/'); returns how many. Cannot be undone."""
+    if not prefix.endswith("/") or prefix == "/":
+        raise ValueError("refusing to delete without a folder prefix")
+    names = [o.object_name for o in _minio().list_objects(bucket, prefix=prefix, recursive=True)]
+    if names:
+        errors = list(_minio().remove_objects(bucket, [DeleteObject(n) for n in names]))
+        if errors:
+            raise RuntimeError(f"could not delete {len(errors)} of {len(names)} object(s): {errors[0]}")
+    _cache.clear()   # the History list must not show a deleted run
+    return len(names)
+
+
+def run_folder_url(folder):
+    bucket, prefix = config.results_bucket_and_prefix()
+    return f"s3://{bucket}/{prefix + '/' if prefix else ''}{folder}"
+
+
+def delete_run(folder):
+    """Deletes one run folder (logs, report, summary, test snapshot) under RESULTS_URL."""
+    bucket, prefix = config.results_bucket_and_prefix()
+    return delete_prefix(bucket, f"{prefix + '/' if prefix else ''}{folder}/")

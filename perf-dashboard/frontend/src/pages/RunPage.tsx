@@ -46,6 +46,7 @@ export function RunPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [logPod, setLogPod] = useState<string | null>(null)
+  const [withResults, setWithResults] = useState(false)
 
   const detail = useQuery({
     queryKey: ['loadtest', ns, name],
@@ -79,10 +80,20 @@ export function RunPage() {
   const others = d.pods.filter((p) => p.role !== 'workers')
 
   const remove = async () => {
-    if (!confirm(`Delete ${name}? Running workers are stopped. Results already in S3 stay.`)) return
-    await api.remove(ns, name)
-    await qc.invalidateQueries({ queryKey: ['loadtests'] })
-    navigate('/')
+    const question = active
+      ? `Stop and delete ${name}? Running workers are stopped. Results already in S3 stay (delete them later from History).`
+      : withResults
+        ? `Delete ${name} AND its results in S3 (logs, report, summary)? This cannot be undone.`
+        : `Delete ${name}? Its results stay in S3 and remain on the History page.`
+    if (!confirm(question)) return
+    try {
+      await api.remove(ns, name, withResults && !active)
+      await qc.invalidateQueries({ queryKey: ['loadtests'] })
+      await qc.invalidateQueries({ queryKey: ['runs'] })
+      navigate('/')
+    } catch (e) {
+      alert((e as Error).message)
+    }
   }
 
   const series: Series[] = [
@@ -100,7 +111,8 @@ export function RunPage() {
         </div>
         <div className="actions">
           {d.report && <a className="btn" href={reportUrl(d.report)} target="_blank" rel="noreferrer">Open report</a>}
-          <button className="btn danger" onClick={remove}>{active ? 'Stop & delete' : 'Delete'}</button>
+          {!active && <label className="inline-check"><input type="checkbox" checked={withResults} onChange={(e) => setWithResults(e.target.checked)} /> also delete results in S3</label>}
+          <button className="btn danger" onClick={remove}>{active ? 'Stop & delete' : withResults ? 'Delete run + results' : 'Delete'}</button>
         </div>
       </div>
 

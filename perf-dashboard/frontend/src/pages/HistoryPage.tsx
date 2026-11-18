@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 
 import { api, reportUrl } from '../api'
 import { ResultBadge } from '../components/Badges'
@@ -6,11 +7,29 @@ import { fmtMs, fmtNum, fmtSeconds, fmtTime } from '../format'
 
 /** Every run folder in S3/MinIO - including runs whose LoadTest was deleted. */
 export function HistoryPage() {
+  const qc = useQueryClient()
   const { data, error, isLoading } = useQuery({ queryKey: ['runs'], queryFn: api.runs, refetchInterval: 30000 })
+  const [busy, setBusy] = useState<string | null>(null)
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const remove = async (folder: string) => {
+    if (!confirm(`Delete the results of ${folder} from S3 (logs, report, summary, test copy)? This cannot be undone.`)) return
+    setBusy(folder)
+    try {
+      const r = await api.removeRun(folder)
+      setMessage({ ok: true, text: `Deleted ${folder} (${r.objects} objects).` })
+      await qc.invalidateQueries({ queryKey: ['runs'] })
+    } catch (e) {
+      setMessage({ ok: false, text: (e as Error).message })
+    } finally {
+      setBusy(null)
+    }
+  }
   return (
     <section>
       <div className="page-head"><h1>History</h1></div>
       {error && <div className="alert bad">{(error as Error).message}</div>}
+      {message && <div className={`alert ${message.ok ? '' : 'bad'}`}>{message.text}</div>}
       {isLoading ? <p className="muted-text">loading…</p> : (
         <div className="card table-wrap">
           <table>
@@ -31,7 +50,10 @@ export function HistoryPage() {
                     <td>{fmtMs(s?.total.p95)}</td>
                     <td>{fmtNum(s?.requestsPerSecond, 1)}</td>
                     <td>{s?.slaPassed === undefined ? <span className="muted-text">{s ? '—' : 'no summary'}</span> : <ResultBadge result={s.slaPassed ? 'Passed' : 'SLAFailed'} />}</td>
-                    <td>{r.report && <a className="btn ghost" href={reportUrl(r.report)} target="_blank" rel="noreferrer">Report</a>}</td>
+                    <td className="actions">
+                      {r.report && <a className="btn ghost" href={reportUrl(r.report)} target="_blank" rel="noreferrer">Report</a>}
+                      <button className="btn ghost danger-text" disabled={busy === r.folder} onClick={() => remove(r.folder)}>{busy === r.folder ? 'Deleting…' : 'Delete'}</button>
+                    </td>
                   </tr>
                 )
               })}

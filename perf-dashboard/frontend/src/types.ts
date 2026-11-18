@@ -87,5 +87,35 @@ export interface RunFolder { folder: string; url: string; report: string | null;
 export interface DashboardConfig {
   namespaces: string[]
   resultsUrl: string
+  plansUrl: string
   defaults: { image: string; s3Secret: string; s3Endpoint: string }
+}
+
+/** A folder of test files (plans, API catalogs, data) kept in S3 and edited from the dashboard. */
+export interface Suite {
+  name: string
+  files: number
+  size: number
+  modified: string | null
+}
+
+export interface SuiteFile {
+  path: string
+  size: number
+  modified: string | null
+  text: boolean
+  plan: boolean
+}
+
+export interface SuiteDetail {
+  name: string
+  url: string
+  files: SuiteFile[]
+}
+
+export interface FileContent {
+  path: string
+  size: number
+  content: string | null
+  editable: boolean
 }

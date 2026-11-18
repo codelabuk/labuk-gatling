@@ -171,13 +171,17 @@ object Perf {
   /** Downloads everything under an s3:// folder, keeping the folder structure (e.g. a report to open locally). */
   private def fetch(rest: List[String]): Int = {
     val a = Args.parse(rest)
-    val url = a.positional.headOption.filter(S3.isS3).getOrElse(return fail("usage: perf fetch <s3://bucket/folder> [<local dir>]"))
+    val url = a.positional.headOption.filter(S3.isS3).getOrElse(return fail("usage: perf fetch <s3://bucket/folder> [<local dir>] [--snapshot <s3://bucket/folder>]"))
+    val snapshot = a.opt("--snapshot")
+    if (snapshot.exists(s => !S3.isS3(s))) return fail("perf fetch: --snapshot must be an s3:// folder")
     val (bucket, prefix) = S3.parse(url)
     val target = Paths.get(a.positional.lift(1).getOrElse(prefix.split('/').filter(_.nonEmpty).lastOption.getOrElse(bucket)))
     Try {
       val s3 = S3.fromEnv()
-      val keys = s3.list(bucket, if (prefix.isEmpty) "" else prefix + "/")
+      val keys = s3.list(bucket, if (prefix.isEmpty) "" else prefix + "/").filterNot(_.endsWith("/")) // skip folder markers
       keys.foreach(k => S3.download(s3, s"s3://$bucket/$k", target.resolve(k.stripPrefix(prefix).stripPrefix("/"))))
+      // --snapshot: keep a copy of exactly these files elsewhere (the operator uses it to freeze a run's tests)
+      if (keys.nonEmpty) snapshot.foreach { s => S3.uploadDir(s3, target, s); println(s"copied ${keys.size} file(s) to $s") }
       keys.size
     }.fold(e => fail(s"perf fetch: ${e.getMessage}"), n =>
       if (n == 0) fail(s"perf fetch: nothing under $url")

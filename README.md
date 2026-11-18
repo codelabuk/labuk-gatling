@@ -662,7 +662,10 @@ What happens:
 | Running | `<name>-workers` — an Indexed Job with N pods | All start at `status.startAt` (now + `startDelaySeconds`); no retries, a crashed worker fails the run |
 | Aggregating | `<name>-report` runs `perf report` | Merged report on the results volume; `status.result` = `Passed` / `SLAFailed` |
 
-Tests come from **Git** (fetched by an init container; `ref` may be a branch, tag or **commit SHA** to pin a
+Tests come from **S3 / MinIO** (`plan.s3: s3://perf-results/test-plans/<suite>` — the suites the dashboard's
+*Test plans* page manages; uses the endpoint and credentials of `results.s3`. The validate pod copies the suite into
+`<run folder>/tests` and every later pod reads that copy, so editing a plan never changes a running test and the run
+folder shows exactly what ran), **Git** (fetched by an init container; `ref` may be a branch, tag or **commit SHA** to pin a
 run to an exact version; token from a Secret), a **ConfigMap** (small flat test sets, 1 MB limit) or **the
 image** (`inImage: true`, absolute `file`). Pods run as non-root; Jobs are owned by the LoadTest (deleting it
 deletes them) and are cleaned up `ttlSecondsAfterFinished` after finishing. Create a new LoadTest (new name)
@@ -684,8 +687,13 @@ as the spark-dashboard).
 |---|---|
 | Runs | every LoadTest: phase, result, workers done/total, start, duration, report link |
 | Run detail | steps (validate → setup → workers → report), cards (requests, errors %, req/s, p95, users, SLAs), live throughput + users charts, per-request and per-transaction tables, errors, **workers table** (pod, node, state, restarts, requests, live users / p95, log viewer), the LoadTest spec, Stop & delete |
-| New run | form → LoadTest (Git or ConfigMap plan, workers, CPU/memory, env, secrets, start delay, live metrics) |
-| History | every run folder in the results bucket with its final numbers and report link |
+| New run | form → LoadTest (saved test plan, Git or ConfigMap; workers, CPU/memory, env, secrets, start delay, live metrics) |
+| Test plans | suites of test files in S3 (`s3://perf-results/test-plans/<suite>/`): create (with a starter plan), upload files, a folder or a zip (folders kept), edit YAML/CSV in the browser (YAML syntax checked on save), delete, download as zip, start a run from a plan |
+| History | every run folder in the results bucket with its final numbers and report link; **Delete** removes the run's folder from S3 (refused while its run is active) |
+
+Deleting from *Run detail* removes the LoadTest (Jobs, pods); its results stay in S3 unless *also delete results in
+S3* is ticked. Deleting results cannot be undone — for routine clean-up prefer a bucket lifecycle rule (e.g. expire
+`runs/` after 90 days). The dashboard's S3 credentials need write and delete rights on `test-plans/` and `runs/`.
 
 ```bash
 docker build -t labuk-perf-dashboard:1.0.0 perf-dashboard            # or push to your registry

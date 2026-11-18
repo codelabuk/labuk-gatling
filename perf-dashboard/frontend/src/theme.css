@@ -100,3 +100,24 @@ tr:last-child td { border-bottom: none; }
 .drawer { width: min(900px, 92vw); height: 100%; background: var(--panel); display: flex; flex-direction: column; }
 .drawer header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .log { flex: 1; margin: 0; padding: 12px 16px; overflow: auto; font-family: ui-monospace, Consolas, monospace; font-size: 12px; white-space: pre-wrap; }
+
+/* test plans */
+.plans { display: grid; grid-template-columns: 280px 1fr; gap: 12px; align-items: start; }
+.suites .new-suite { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 8px; }
+.suites .new-suite label { flex: 1; margin-bottom: 0; }
+.suite-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.suite-list a { display: flex; flex-direction: column; padding: 8px 10px; border-radius: 6px; color: var(--text); }
+.suite-list a:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.suite-list a.active { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.actions.wrap { flex-wrap: wrap; justify-content: flex-end; }
+td.actions { white-space: nowrap; }
+.flush { margin: 0; }
+.small { font-size: 12px; }
+.danger-text { color: var(--bad) !important; border-color: transparent !important; }
+.editor { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 10px 0 14px; background: var(--bg); }
+.editor-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
+.editor textarea.code { width: 100%; box-sizing: border-box; min-height: 420px; resize: vertical; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px;
+  line-height: 1.5; tab-size: 2; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+.form-note { font-size: 12px; color: var(--muted); align-self: end; padding-bottom: 18px; }
+.inline-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+@media (max-width: 900px) { .plans { grid-template-columns: 1fr; } }

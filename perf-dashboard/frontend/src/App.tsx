@@ -2,6 +2,7 @@ import { NavLink, Route, Routes } from 'react-router-dom'
 
 import { HistoryPage } from './pages/HistoryPage'
 import { NewRunPage } from './pages/NewRunPage'
+import { PlansPage } from './pages/PlansPage'
 import { RunPage } from './pages/RunPage'
 import { RunsPage } from './pages/RunsPage'
 
@@ -13,6 +14,7 @@ export function App() {
         <nav>
           <NavLink to="/" end>Runs</NavLink>
           <NavLink to="/new">New run</NavLink>
+          <NavLink to="/plans">Test plans</NavLink>
           <NavLink to="/history">History</NavLink>
         </nav>
         <div className="sidebar-foot">Gatling load tests on Kubernetes</div>
@@ -21,6 +23,8 @@ export function App() {
         <Routes>
           <Route path="/" element={<RunsPage />} />
           <Route path="/new" element={<NewRunPage />} />
+          <Route path="/plans" element={<PlansPage />} />
+          <Route path="/plans/:suite" element={<PlansPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/runs/:ns/:name" element={<RunPage />} />
           <Route path="*" element={<p>Not found.</p>} />

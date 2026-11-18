@@ -4,6 +4,7 @@ import os
 from flask import Flask, jsonify, send_from_directory
 from werkzeug.exceptions import HTTPException
 
+import config
 from routes import BLUEPRINTS
 
 DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "dist")
@@ -11,6 +12,7 @@ DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "dist"
 
 def create_app():
     app = Flask(__name__, static_folder=None)
+    app.config["MAX_CONTENT_LENGTH"] = config.MAX_UPLOAD_BYTES   # uploads of test files / zips
     for bp in BLUEPRINTS:
         app.register_blueprint(bp)
 

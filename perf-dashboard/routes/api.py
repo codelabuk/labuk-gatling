@@ -8,11 +8,13 @@ from kubernetes.client.exceptions import ApiException
 import config
 import kube
 import live
+import plan_store
 import storage
 
 bp = Blueprint("api", __name__, url_prefix="/api")
 
 _NAME = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+TERMINAL = {"Completed", "Failed"}
 
 
 def _watched(ns):
@@ -68,6 +70,7 @@ def get_config():
     return {
         "namespaces": config.WATCH_NAMESPACES,
         "resultsUrl": config.RESULTS_URL,
+        "plansUrl": config.PLANS_URL,
         "defaults": {"image": config.DEFAULT_IMAGE, "s3Secret": config.DEFAULT_S3_SECRET, "s3Endpoint": config.DEFAULT_RUN_S3_ENDPOINT},
     }
 
@@ -130,9 +133,15 @@ def build_loadtest(body):
     file = (plan.get("file") or "").strip()
     if not file:
         raise ValueError("plan.file is required")
-    git, cm = plan.get("git") or {}, (plan.get("configMap") or "").strip()
-    if bool(git.get("repo")) == bool(cm):
-        raise ValueError("choose exactly one test source: a Git repository or a ConfigMap")
+    git, cm, suite = plan.get("git") or {}, (plan.get("configMap") or "").strip(), (plan.get("suite") or "").strip()
+    if [bool(git.get("repo")), bool(cm), bool(suite)].count(True) != 1:
+        raise ValueError("choose exactly one test source: saved test plans, a Git repository or a ConfigMap")
+    if suite:
+        try:
+            if not plan_store.file_exists(suite, file):
+                raise ValueError(f"{file} is not in the saved suite {suite}")
+        except plan_store.PlanError as e:
+            raise ValueError(str(e))
     try:
         workers = int(body.get("workers", 1))
     except (TypeError, ValueError):
@@ -146,7 +155,9 @@ def build_loadtest(body):
         raise ValueError("name must be lower case letters, digits and '-', at most 60 characters")
 
     spec_plan = {"file": file}
-    if cm:
+    if suite:
+        spec_plan["s3"] = plan_store.suite_url(suite)   # the validate pod copies it into the run folder
+    elif cm:
         spec_plan["configMap"] = cm
     else:
         spec_plan["git"] = {"repo": git["repo"].strip(), "ref": (git.get("ref") or "main").strip()}
@@ -188,11 +199,46 @@ def create_loadtest():
     return jsonify(_row(created)), 201
 
 
+def _results_folder(run_dir):
+    """Run folder name when run_dir is under our results prefix (only those may be deleted from here)."""
+    base = storage.run_folder_url("")
+    if run_dir and run_dir.startswith(base):
+        folder = run_dir[len(base):].strip("/")
+        if _NAME.match(folder):
+            return folder
+    return None
+
+
 @bp.delete("/loadtests/<ns>/<name>")
 def delete_loadtest(ns, name):
+    """Deletes the LoadTest (its Jobs and pods go with it). ?results=true also deletes its run folder in S3."""
     _watched(ns)
+    deleted = {"deleted": name}
+    if request.args.get("results", "").lower() in ("1", "true", "yes"):
+        st = kube.get_loadtest(ns, name).get("status") or {}
+        if (st.get("phase") or "Pending") not in TERMINAL:
+            return jsonify(error="the run is still active - stop it first (Delete), then delete its results from History"), 409
+        folder = _results_folder(st.get("runDir"))
+        if folder:
+            deleted["resultObjects"] = storage.delete_run(folder)   # results first: if this fails the run stays visible
     kube.delete_loadtest(ns, name)
-    return {"deleted": name}
+    return deleted
+
+
+@bp.delete("/runs/<folder>")
+def delete_run(folder):
+    """Deletes a run's folder in S3 (logs, report, summary, test copy). Refused while its LoadTest is still active."""
+    if not _NAME.match(folder):
+        abort(404)
+    url = storage.run_folder_url(folder)
+    for lt in kube.list_loadtests(config.WATCH_NAMESPACES):
+        st = lt.get("status") or {}
+        if st.get("runDir") == url and (st.get("phase") or "Pending") not in TERMINAL:
+            return jsonify(error=f"run {lt['metadata']['name']} is still active - stop it first"), 409
+    n = storage.delete_run(folder)
+    if n == 0:
+        return jsonify(error=f"no results for {folder}"), 404
+    return {"deleted": folder, "objects": n}
 
 
 @bp.get("/runs")

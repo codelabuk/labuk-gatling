@@ -115,6 +115,10 @@ spec:
                     description: "The tests are baked into the image; `file` is an\
                       \ absolute path"
                     type: "boolean"
+                  s3:
+                    description: "Download the tests from S3 / MinIO (s3://bucket/folder)\
+                      \ with the endpoint and credentials of results.s3"
+                    type: "string"
                 required:
                 - "file"
                 type: "object"

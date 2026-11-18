@@ -33,6 +33,8 @@ spec:
               value: {{ join "," .Values.watchNamespaces | quote }}
             - name: RESULTS_URL
               value: {{ .Values.results.url | quote }}
+            - name: PLANS_URL
+              value: {{ .Values.results.plansUrl | quote }}
             - name: S3_ENDPOINT
               value: {{ .Values.results.s3Endpoint | quote }}
             - name: AWS_REGION

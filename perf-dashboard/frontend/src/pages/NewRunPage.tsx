@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 
 import { api } from '../api'
 
@@ -12,13 +12,18 @@ const parseList = (text: string) => text.split(/[,\n]/).map((s) => s.trim()).fil
 export function NewRunPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const [params] = useSearchParams()   // ?suite=&file= from the Test plans page's Run button
   const cfg = useQuery({ queryKey: ['config'], queryFn: api.config })
-  const [source, setSource] = useState<'git' | 'configMap'>('git')
+  const [source, setSource] = useState<'suite' | 'git' | 'configMap'>('suite')
   const [form, setForm] = useState({
-    namespace: '', name: '', image: '', file: '', repo: '', ref: 'main', tokenSecret: '', configMap: '',
+    namespace: '', name: '', image: '', file: params.get('file') ?? '', suite: params.get('suite') ?? '',
+    repo: '', ref: 'main', tokenSecret: '', configMap: '',
     workers: '2', env: '', secrets: '', scenarios: '', cpu: '', memory: '1Gi', startDelaySeconds: '30', metrics: true,
   })
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value })
+  const suites = useQuery({ queryKey: ['suites'], queryFn: api.suites, enabled: source === 'suite' })
+  const suite = useQuery({ queryKey: ['suite', form.suite], queryFn: () => api.suite(form.suite), enabled: source === 'suite' && !!form.suite })
+  const planFiles = (suite.data?.files ?? []).filter((f) => f.plan)
 
   const create = useMutation({
     mutationFn: () => api.create({
@@ -26,9 +31,11 @@ export function NewRunPage() {
       name: form.name || undefined,
       image: form.image || undefined,
       workers: Number(form.workers),
-      plan: source === 'git'
-        ? { file: form.file, git: { repo: form.repo, ref: form.ref, tokenSecret: form.tokenSecret || undefined } }
-        : { file: form.file, configMap: form.configMap },
+      plan: source === 'suite'
+        ? { file: form.file, suite: form.suite }
+        : source === 'git'
+          ? { file: form.file, git: { repo: form.repo, ref: form.ref, tokenSecret: form.tokenSecret || undefined } }
+          : { file: form.file, configMap: form.configMap },
       env: parseEnv(form.env),
       secretRefs: parseList(form.secrets),
       scenarios: parseList(form.scenarios),
@@ -52,10 +59,29 @@ export function NewRunPage() {
         <fieldset>
           <legend>Test plan</legend>
           <div className="seg">
+            <button type="button" className={source === 'suite' ? 'on' : ''} onClick={() => setSource('suite')}>Saved test plans</button>
             <button type="button" className={source === 'git' ? 'on' : ''} onClick={() => setSource('git')}>Git repository</button>
             <button type="button" className={source === 'configMap' ? 'on' : ''} onClick={() => setSource('configMap')}>ConfigMap</button>
           </div>
-          {source === 'git' ? (
+          {source === 'suite' ? (
+            <>
+              <div className="row3">
+                <label>Suite<select required value={form.suite} onChange={(e) => setForm({ ...form, suite: e.target.value, file: '' })}>
+                  <option value="">choose…</option>
+                  {(suites.data ?? []).map((s) => <option key={s.name}>{s.name}</option>)}
+                </select></label>
+                <label>Plan<select required value={form.file} onChange={set('file')} disabled={!form.suite}>
+                  <option value="">{form.suite && suite.data && !planFiles.length ? 'no plan in this suite' : 'choose…'}</option>
+                  {planFiles.map((f) => <option key={f.path}>{f.path}</option>)}
+                </select></label>
+                <div className="form-note">
+                  {suites.data?.length === 0 ? <>No saved plans yet - <Link to="/plans">create or upload a suite</Link>.</>
+                    : <><Link to={form.suite ? `/plans/${form.suite}` : '/plans'}>Manage test plans</Link> · the run uses a copy taken at start</>}
+                </div>
+              </div>
+              {suites.error && <div className="alert bad">{(suites.error as Error).message}</div>}
+            </>
+          ) : source === 'git' ? (
             <div className="row3">
               <label>Repository URL<input required value={form.repo} onChange={set('repo')} placeholder="https://git.example.com/qa/perf-tests.git" /></label>
               <label>Branch, tag or commit<input value={form.ref} onChange={set('ref')} /></label>
@@ -64,7 +90,7 @@ export function NewRunPage() {
           ) : (
             <label>ConfigMap with the test files<input required value={form.configMap} onChange={set('configMap')} placeholder="sr-tests" /></label>
           )}
-          <label>Plan file<input required value={form.file} onChange={set('file')} placeholder={source === 'git' ? 'plans/orders.yaml (relative to the repository)' : 'orders.yaml (a key of the ConfigMap)'} /></label>
+          {source !== 'suite' && <label>Plan file<input required value={form.file} onChange={set('file')} placeholder={source === 'git' ? 'plans/orders.yaml (relative to the repository)' : 'orders.yaml (a key of the ConfigMap)'} /></label>}
         </fieldset>
 
         <fieldset>

@@ -231,7 +231,7 @@ class LoadTestFlowTest {
         lt.getSpec().plan.git = null;
         flow().step(lt);
         assertEquals(Phase.Failed, lt.getStatus().phase);
-        assertEquals("spec.plan needs exactly one of: git, configMap, inImage", lt.getStatus().message);
+        assertEquals("spec.plan needs exactly one of: git, configMap, inImage, s3", lt.getStatus().message);
         assertNull(job(lt, Role.validate));
     }
 
@@ -277,5 +277,43 @@ class LoadTestFlowTest {
         var cmPod = job(cm, Role.validate).getSpec().getTemplate().getSpec();
         assertTrue(cmPod.getInitContainers().isEmpty());
         assertEquals("orders-tests", cmPod.getVolumes().stream().filter(v -> v.getConfigMap() != null).findFirst().orElseThrow().getConfigMap().getName());
+    }
+
+    @Test
+    void testsFromS3AreFetchedWithTheRunnerImageAndResultCredentials() {
+        LoadTest lt = loadTest("from-s3");
+        LoadTestSpec spec = lt.getSpec();
+        spec.plan.git = null;
+        spec.plan.s3 = "s3://perf-results/test-plans/sr-flow";
+        // plan.s3 borrows endpoint + credentials from results.s3
+        assertEquals("spec.plan.s3 needs results.s3 (its endpoint and credentials are used)", JobFactory.specProblem(spec));
+        spec.results.pvc = null;
+        spec.results.s3 = new LoadTestSpec.S3Results();
+        spec.results.s3.url = "s3://perf-results/runs";
+        spec.results.s3.endpoint = "http://minio.minio.svc:9000";
+        spec.results.s3.credentialsSecret = "minio-creds";
+        assertNull(JobFactory.specProblem(spec));
+
+        flow().step(lt);
+        var pod = job(lt, Role.validate).getSpec().getTemplate().getSpec();
+        Container fetch = pod.getInitContainers().get(0);
+        assertEquals("fetch-tests", fetch.getName());
+        assertEquals(spec.image, fetch.getImage());
+        // validate fetches the suite and keeps a copy in the run folder ...
+        assertEquals(List.of("fetch", "s3://perf-results/test-plans/sr-flow", "/tests",
+                "--snapshot", "s3://perf-results/runs/from-s3-1a2b3c4d/tests"), fetch.getArgs());
+        assertEquals("http://minio.minio.svc:9000", fetch.getEnv().stream().filter(e -> e.getName().equals("S3_ENDPOINT")).findFirst().orElseThrow().getValue());
+        // only the S3 credentials - not the test's own secrets or variables
+        assertEquals(List.of("minio-creds"), fetch.getEnvFrom().stream().map(e -> e.getSecretRef().getName()).toList());
+        assertTrue(fetch.getEnv().stream().noneMatch(e -> e.getName().equals("BASE_URL")));
+        assertTrue(pod.getVolumes().stream().anyMatch(v -> "tests".equals(v.getName()) && v.getEmptyDir() != null));
+        assertEquals("/tests/plans/sr-email-status.yaml", JobFactory.planPath(spec));
+        // ... and every later pod reads that copy, not the (editable) suite
+        var workerFetch = JobFactory.workers(lt, JobFactory.runDir(lt), "2026-11-20T10:01:00Z", false)
+                .getSpec().getTemplate().getSpec().getInitContainers().get(0);
+        assertEquals(List.of("fetch", "s3://perf-results/runs/from-s3-1a2b3c4d/tests", "/tests"), workerFetch.getArgs());
+
+        spec.plan.s3 = "perf-results/tests";
+        assertEquals("spec.plan.s3 must look like s3://bucket/folder", JobFactory.specProblem(spec));
     }
 }

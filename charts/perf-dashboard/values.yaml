@@ -14,6 +14,9 @@ watchNamespaces: [perf]
 # where run results are (the dashboard reads summaries and serves reports from here)
 results:
   url: s3://perf-results/runs
+  # saved test plans (Test plans tab): one folder per suite; same endpoint and credentials.
+  # The credentials need write and delete rights here and on the results prefix (to delete runs).
+  plansUrl: s3://perf-results/test-plans
   s3Endpoint: http://minio.minio.svc:9000
   region: us-east-1
   # Secret (in the release namespace) with AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
