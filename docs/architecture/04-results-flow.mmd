@@ -1,0 +1,40 @@
+%% 4. Results and metrics: live while running, exact when finished
+flowchart LR
+    subgraph worker["each worker pod"]
+        engine["Gatling engine"]
+        log[("simulation.log<br/>binary, written in chunks")]
+        reader["LiveLogReader<br/>follows the log"]
+        metrics["LiveMetrics<br/>:9464/metrics"]
+        wsum["RunSummary<br/>worker-i.json"]
+        engine --> log --> reader --> metrics
+        log -->|"at the end"| wsum
+    end
+
+    subgraph store["MinIO / S3: perf-results/runs/run-folder/"]
+        shared["shared.json"]
+        logs["logs/worker-i.log<br/>logs/worker-i.json"]
+        html["report/merged/index.html ..."]
+        summary["report/summary.json"]
+    end
+
+    subgraph reportpod["report pod"]
+        merger["LogMerger<br/>re-base timestamps, one log"]
+        gatlingro["Gatling reports-only<br/>HTML + SLA verdict"]
+        rsum["RunSummary<br/>(t-digest, like the report)"]
+        merger --> gatlingro
+        merger --> rsum
+    end
+
+    log -->|"upload"| logs
+    wsum -->|"upload"| logs
+    logs --> merger
+    gatlingro --> html
+    rsum --> summary
+
+    dash["perf-dashboard"]
+    prom["Prometheus / Grafana"]
+    metrics -->|"live, summed across workers"| dash
+    metrics -.-> prom
+    logs -->|"per-worker final"| dash
+    summary -->|"run final"| dash
+    html -->|"/reports/... in the browser"| dash

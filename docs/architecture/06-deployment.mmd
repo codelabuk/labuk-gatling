@@ -1,0 +1,36 @@
+%% 6. Deployment: images, charts, namespaces
+flowchart TB
+    subgraph build["Build (developer / CI)"]
+        mvn["mvn install<br/>jars, perf zip, generated CRD"]
+        img_runner["labuk-perf-runner<br/>gatling-runner/Dockerfile"]
+        img_op["labuk-loadtest-operator<br/>loadtest-operator/Dockerfile"]
+        img_dash["labuk-perf-dashboard<br/>perf-dashboard/Dockerfile"]
+        mvn --> img_runner & img_op
+    end
+    registry[("Container registry<br/>e.g. Harbor / Nexus")]
+    img_runner & img_op & img_dash --> registry
+
+    subgraph cluster["Kubernetes cluster"]
+        crd[["CRD loadtests.perf.codelabuk.org"]]
+        subgraph perfns["namespace: perf"]
+            op["Deployment loadtest-operator<br/>+ ServiceAccount, ClusterRole,<br/>Lease Role (leader election)"]
+            dash["Deployment perf-dashboard<br/>+ Service, ClusterRole"]
+            ing["Ingress perf-dashboard<br/>TLS: perf-dashboard-tls"]
+            sec["Secrets: minio-creds,<br/>perf-secrets, git-creds"]
+            runs["Jobs + pods per LoadTest<br/>(runner image)"]
+        end
+        subgraph miniofs["namespace: minio"]
+            minio[("MinIO<br/>bucket perf-results")]
+        end
+        ingressctl["ingress-nginx"]
+    end
+
+    helm_op["helm: charts/loadtest-operator"] --> op & crd
+    helm_dash["helm: charts/perf-dashboard"] --> dash & ing
+    registry -.-> op & dash & runs
+    ingressctl --> ing --> dash
+    op --> runs
+    runs --> minio
+    dash --> minio
+    sec -.-> runs & dash
+    browser(["Browser"]) -->|"https://perf-dashboard.codelabuk.dev"| ingressctl

@@ -1,0 +1,59 @@
+%% 2. Modules and their dependencies
+flowchart TB
+    subgraph repo["labuk-gatling repository"]
+        direction TB
+        subgraph core["gatling-api-core (Scala)"]
+            core_load["load<br/>PlanLoader, Node, RunOptions, LoadMath"]
+            core_model["model<br/>TestPlan, Step, ApiDef, LoadDef, SlaDef"]
+            core_build["build<br/>SimulationAssembler, ChainFactory,<br/>AuthStrategy, RecordResult"]
+            core_sim["sim<br/>YamlSimulation"]
+            core_data["data<br/>CSV, RecordSource, Worker split, SharedFile"]
+            core_expr["expr<br/>Condition, Durations"]
+            core_results["results<br/>LogMerger"]
+            core_metrics["metrics<br/>LiveLogReader, LiveMetrics, RunSummary"]
+            core_cli["cli<br/>Validate, Merge"]
+            core_plugin["plugin SPI<br/>StepPlugin, DataSourcePlugin"]
+        end
+        subgraph sql["gatling-sql (Scala)"]
+            sql_plugins["SqlStepPlugin, JdbcDataSourcePlugin"]
+            sql_exec["SqlAction, SqlExecutor, Pools (HikariCP)"]
+        end
+        subgraph runner["gatling-runner (Scala)"]
+            perf["Perf CLI"]
+            kube["Kube: submit / status"]
+            s3["S3 client (SigV4)"]
+            lr["lr.VuGenConverter"]
+            dist["perf-x.zip + Dockerfile"]
+        end
+        subgraph operator["loadtest-operator (Java)"]
+            op_crd["LoadTest CRD (generated)"]
+            op_flow["LoadTestReconciler, LoadTestFlow"]
+            op_jobs["JobFactory"]
+        end
+        subgraph dashboard["perf-dashboard (Python + TypeScript)"]
+            dash_api["Flask: api, reports, kube, live, storage"]
+            dash_ui["React: Runs, Run detail, New run, History"]
+        end
+        subgraph charts["Helm charts"]
+            chart_op["charts/loadtest-operator"]
+            chart_dash["charts/perf-dashboard"]
+        end
+    end
+
+    gatling["Gatling 3.13.1 (open source)<br/>Scala 2.13.15"]
+    josdk["Java Operator SDK 5.1.1<br/>fabric8 7.3.1"]
+
+    core_load --> core_model
+    core_build --> core_model & core_expr & core_data & core_plugin & core_metrics
+    core_sim --> core_load & core_build & core_metrics
+    core_cli --> core_load & core_results
+    core --> gatling
+    sql_plugins -.->|"implements"| core_plugin
+    sql --> core
+    runner --> sql
+    perf --> core_cli & core_sim & core_metrics & s3 & kube & lr
+    operator --> josdk
+    op_jobs -.->|"pods run the runner image"| dist
+    op_crd -.->|"copied into"| chart_op
+    dash_api -.->|"reads"| op_crd
+    chart_dash -.-> dashboard

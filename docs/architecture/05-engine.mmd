@@ -1,0 +1,42 @@
+%% 5. Engine internals: from YAML to Gatling
+flowchart LR
+    subgraph inputs["Test files (no code)"]
+        plan["plan.yaml<br/>scenarios, load, SLAs"]
+        catalog["apis/*.yaml<br/>API catalog"]
+        data["data/*.csv"]
+        env["-DNAME / env vars<br/>fill ${NAME}"]
+        vugen["LoadRunner VuGen script"]
+    end
+
+    conv["perf convert-lr<br/>VuGenConverter"]
+    vugen --> conv --> plan & catalog & data
+
+    loader["PlanLoader<br/>placeholders, includes,<br/>typo + cross checks"]
+    model["TestPlan model<br/>steps, auth, load, SLAs"]
+    plan & catalog & data & env --> loader --> model
+
+    subgraph assemble["SimulationAssembler (per worker)"]
+        split["Worker split<br/>users, rates, CSV rows, shared lists"]
+        setupscn["setup scenario<br/>(once) + shares"]
+        chain["ChainFactory<br/>api, transaction, pollUntil, forEach,<br/>if, retry, wait, pace, rendezvous ..."]
+        auth["AuthStrategy<br/>login / jwt / static, refresh"]
+        inj["injection + throttle"]
+        sla["SLAs -> Gatling assertions"]
+    end
+    plugins["Plugins (ServiceLoader)<br/>sql step, jdbc data source"]
+
+    model --> split --> setupscn & chain & inj
+    chain --> auth
+    chain -.-> plugins
+    model --> sla
+
+    sim["YamlSimulation"]
+    setupscn & chain & inj & sla --> sim
+
+    subgraph runtime["Gatling runtime"]
+        netty["HTTP over Netty<br/>(non-blocking)"]
+        jdbc["SQL thread pool<br/>HikariCP per connection"]
+    end
+    sim --> netty & jdbc
+    netty --> apis["APIs"]
+    jdbc --> dbs[("Databases")]

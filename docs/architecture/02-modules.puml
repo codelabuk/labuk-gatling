@@ -1,0 +1,96 @@
+@startuml 02-modules
+!include _theme.iuml
+title labuk-gatling - modules and dependencies
+
+package "gatling-api-core (Scala)" as core <<code>> {
+  component "load\nPlanLoader, Node, RunOptions, LoadMath" as c_load <<code>>
+  component "model\nTestPlan, Step, ApiDef, LoadDef, SlaDef" as c_model <<code>>
+  component "build\nSimulationAssembler, ChainFactory,\nAuthStrategy, RecordResult" as c_build <<code>>
+  component "sim\nYamlSimulation" as c_sim <<code>>
+  component "data\nCSV, RecordSource, Worker split, SharedFile" as c_data <<code>>
+  component "expr\nCondition, Durations" as c_expr <<code>>
+  component "results\nLogMerger" as c_results <<store>>
+  component "metrics\nLiveLogReader, LiveMetrics, RunSummary" as c_metrics <<obs>>
+  component "cli\nValidate, Merge" as c_cli <<code>>
+  interface "plugin SPI\nStepPlugin, DataSourcePlugin" as c_plugin <<code>>
+}
+
+package "gatling-sql (Scala)" as sql <<code>> {
+  component "SqlStepPlugin\nJdbcDataSourcePlugin" as s_plugins <<code>>
+  component "SqlAction, SqlExecutor\nPools (HikariCP)" as s_exec <<sut>>
+}
+
+package "gatling-runner (Scala)" as runner <<code>> {
+  component "Perf CLI" as r_perf <<code>>
+  component "Kube\nsubmit / status" as r_kube <<ctrl>>
+  component "S3 client (SigV4)" as r_s3 <<store>>
+  component "lr.VuGenConverter" as r_lr <<input>>
+  artifact "perf-x.zip\nDockerfile" as r_dist <<build>>
+}
+
+package "loadtest-operator (Java)" as operator <<ns>> {
+  component "LoadTest CRD\n(generated)" as o_crd <<ctrl>>
+  component "LoadTestReconciler\nLoadTestFlow" as o_flow <<ctrl>>
+  component "JobFactory" as o_jobs <<ctrl>>
+}
+
+package "perf-dashboard (Python + TypeScript)" as dashboard <<ns>> {
+  component "Flask\napi, reports, kube, live, storage" as d_api <<ctrl>>
+  component "React\nRuns, Run detail, New run, History" as d_ui <<ctrl>>
+}
+
+package "Helm charts" <<build>> {
+  artifact "charts/loadtest-operator" as h_op <<build>>
+  artifact "charts/perf-dashboard" as h_dash <<build>>
+}
+
+component "Gatling 3.13.1 (open source)\nScala 2.13.15" as gatling <<lib>>
+component "Java Operator SDK 5.1.1\nfabric8 7.3.1" as josdk <<lib>>
+
+' inside core
+c_load -[#6B4FBB]-> c_model
+c_build -[#6B4FBB]-> c_model
+c_build -[#6B4FBB]-> c_expr
+c_build -[#6B4FBB]-> c_data
+c_build -[#6B4FBB]-> c_plugin
+c_build -[#6B4FBB]-> c_metrics
+c_sim -[#6B4FBB]-> c_load
+c_sim -[#6B4FBB]-> c_build
+c_sim -[#6B4FBB]-> c_metrics
+c_cli -[#6B4FBB]-> c_load
+c_cli -[#6B4FBB]-> c_results
+
+' between modules
+core -[#7F8C8D,bold]-> gatling
+s_plugins ..|> c_plugin : implements
+s_plugins -[#6B4FBB]-> s_exec
+sql -[#6B4FBB,bold]-> core
+runner -[#6B4FBB,bold]-> sql
+r_perf -[#6B4FBB]-> c_cli
+r_perf -[#6B4FBB]-> c_sim
+r_perf -[#6B4FBB]-> r_s3
+r_perf -[#6B4FBB]-> r_kube
+r_perf -[#6B4FBB]-> r_lr
+
+' operator, dashboard, charts
+operator -[#7F8C8D,bold]-> josdk
+o_flow -[#2F6FD6]-> o_jobs
+o_jobs -[#2F6FD6,dashed]-> r_dist : pods run the runner image
+o_crd -[#5B6B7F,dashed]-> h_op : copied into
+d_ui -[#2F6FD6]-> d_api
+d_api -[#2F6FD6,dashed]-> o_crd : reads / creates LoadTests
+h_dash -[#5B6B7F,dashed]-> dashboard : installs
+
+legend right
+  <b>Colour key</b>
+  |<#EFE8FB> engine / code |
+  |<#E3EEFF> control plane |
+  |<#FFF3D9> results / storage |
+  |<#E0F5F7> live metrics |
+  |<#FDE7E7> database access |
+  |<#FFFBEA> LoadRunner conversion |
+  |<#EEF1F5> build / packaging |
+  |<#F4F6F8> third-party library |
+  <b>Bold arrow</b> = Maven module dependency
+endlegend
+@enduml

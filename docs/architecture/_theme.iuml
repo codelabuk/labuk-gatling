@@ -1,0 +1,173 @@
+' Shared look for the labuk-gatling PlantUML diagrams (included with: !include _theme.iuml)
+'
+' Element colours (by role, set with a stereotype on the element):
+'   <<ctrl>>   control plane          blue    #E3EEFF / #2F6FD6
+'   <<run>>    run pods (Jobs)        green   #E3F6E8 / #2E8B57
+'   <<store>>  results / storage      amber   #FFF3D9 / #D98E04
+'   <<sut>>    systems under test     red     #FDE7E7 / #C0392B
+'   <<code>>   engine / code          purple  #EFE8FB / #6B4FBB
+'   <<input>>  test files (YAML/CSV)  sand    #FFFBEA / #B59F3B
+'   <<build>>  build / images         grey    #EEF1F5 / #5B6B7F
+'   <<obs>>    observability          teal    #E0F5F7 / #17A2B8
+'   <<lib>>    third-party library    slate   #F4F6F8 / #7F8C8D
+'
+' Arrow colours (set on each arrow):
+'   control #2F6FD6   load #C0392B (bold)   results data #D98E04   live metrics #17A2B8 (dashed)   build #5B6B7F
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam roundCorner 10
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+skinparam defaultFontColor #1F2D3D
+skinparam titleFontSize 18
+skinparam titleFontStyle bold
+skinparam titleFontColor #1F2D3D
+skinparam componentStyle rectangle
+skinparam nodesep 35
+skinparam ranksep 45
+skinparam ArrowColor #5B6B7F
+skinparam ArrowFontColor #44546A
+skinparam ArrowFontSize 10
+skinparam ArrowThickness 1.3
+skinparam legendBackgroundColor #FFFFFF
+skinparam legendBorderColor #C9D3DF
+skinparam legendFontSize 11
+skinparam noteBackgroundColor #FFFBEA
+skinparam noteBorderColor #B59F3B
+
+skinparam actor {
+  BackgroundColor #FDEBD0
+  BorderColor #A0522D
+  FontStyle bold
+}
+
+skinparam component {
+  BackgroundColor #FFFFFF
+  BorderColor #5B6B7F
+  BackgroundColor<<ctrl>> #E3EEFF
+  BorderColor<<ctrl>> #2F6FD6
+  BackgroundColor<<run>> #E3F6E8
+  BorderColor<<run>> #2E8B57
+  BackgroundColor<<store>> #FFF3D9
+  BorderColor<<store>> #D98E04
+  BackgroundColor<<sut>> #FDE7E7
+  BorderColor<<sut>> #C0392B
+  BackgroundColor<<code>> #EFE8FB
+  BorderColor<<code>> #6B4FBB
+  BackgroundColor<<input>> #FFFBEA
+  BorderColor<<input>> #B59F3B
+  BackgroundColor<<build>> #EEF1F5
+  BorderColor<<build>> #5B6B7F
+  BackgroundColor<<obs>> #E0F5F7
+  BorderColor<<obs>> #17A2B8
+  BackgroundColor<<lib>> #F4F6F8
+  BorderColor<<lib>> #7F8C8D
+}
+
+skinparam collections {
+  BackgroundColor<<ctrl>> #E3EEFF
+  BorderColor<<ctrl>> #2F6FD6
+}
+
+skinparam interface {
+  BackgroundColor<<code>> #EFE8FB
+  BorderColor<<code>> #6B4FBB
+}
+
+skinparam database {
+  BackgroundColor #FFF3D9
+  BorderColor #D98E04
+  BackgroundColor<<store>> #FFF3D9
+  BorderColor<<store>> #D98E04
+  BackgroundColor<<sut>> #FDE7E7
+  BorderColor<<sut>> #C0392B
+  BackgroundColor<<input>> #FFFBEA
+  BorderColor<<input>> #B59F3B
+  BackgroundColor<<build>> #EEF1F5
+  BorderColor<<build>> #5B6B7F
+}
+
+skinparam file {
+  BackgroundColor #FFFFFF
+  BorderColor #5B6B7F
+  BackgroundColor<<input>> #FFFBEA
+  BorderColor<<input>> #B59F3B
+  BackgroundColor<<store>> #FFF3D9
+  BorderColor<<store>> #D98E04
+  BackgroundColor<<run>> #E3F6E8
+  BorderColor<<run>> #2E8B57
+}
+
+skinparam artifact {
+  BackgroundColor #EEF1F5
+  BorderColor #5B6B7F
+  BackgroundColor<<build>> #EEF1F5
+  BorderColor<<build>> #5B6B7F
+  BackgroundColor<<ctrl>> #E3EEFF
+  BorderColor<<ctrl>> #2F6FD6
+}
+
+skinparam package {
+  BackgroundColor #FAFBFC
+  BorderColor #9AA9BA
+  FontColor #34495E
+  FontStyle bold
+  BackgroundColor<<ns>> #F4F8FF
+  BorderColor<<ns>> #2F6FD6
+  BackgroundColor<<run>> #F3FBF5
+  BorderColor<<run>> #2E8B57
+  BackgroundColor<<store>> #FFFAF0
+  BorderColor<<store>> #D98E04
+  BackgroundColor<<sut>> #FFF7F7
+  BorderColor<<sut>> #C0392B
+  BackgroundColor<<code>> #F8F5FE
+  BorderColor<<code>> #6B4FBB
+  BackgroundColor<<input>> #FFFDF4
+  BorderColor<<input>> #B59F3B
+  BackgroundColor<<build>> #F6F8FA
+  BorderColor<<build>> #5B6B7F
+}
+
+skinparam node {
+  BackgroundColor #FAFBFC
+  BorderColor #9AA9BA
+  FontColor #34495E
+  FontStyle bold
+  BackgroundColor<<run>> #F3FBF5
+  BorderColor<<run>> #2E8B57
+  BackgroundColor<<build>> #F6F8FA
+  BorderColor<<build>> #5B6B7F
+  BackgroundColor<<local>> #FFF8F0
+  BorderColor<<local>> #A0522D
+  BackgroundColor<<cluster>> #F7FAFD
+  BorderColor<<cluster>> #326CE5
+}
+
+skinparam cloud {
+  BackgroundColor #F7FAFD
+  BorderColor #326CE5
+  FontColor #326CE5
+  FontStyle bold
+}
+
+skinparam sequence {
+  LifeLineBorderColor #9AA9BA
+  LifeLineBackgroundColor #E3EEFF
+  GroupBorderColor #9AA9BA
+  GroupBackgroundColor #F4F8FF
+  GroupHeaderFontColor #2F6FD6
+  DividerBackgroundColor #EEF1F5
+  DividerBorderColor #9AA9BA
+  DividerFontStyle bold
+  BoxBorderColor #9AA9BA
+  BoxFontStyle bold
+}
+
+skinparam participant {
+  BackgroundColor #FFFFFF
+  BorderColor #5B6B7F
+  FontStyle bold
+}
+
+hide stereotype

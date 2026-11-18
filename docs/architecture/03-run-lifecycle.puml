@@ -1,0 +1,75 @@
+@startuml 03-run-lifecycle
+!include _theme.iuml
+title labuk-gatling - lifecycle of one distributed run
+autonumber "<b>[00]"
+
+actor Tester as T
+participant "perf-dashboard /\nperf submit" as D #E3EEFF
+
+box "Kubernetes cluster - namespace perf" #F4F8FF
+  participant "Kubernetes API" as K #E3EEFF
+  participant "loadtest-operator" as O #E3EEFF
+  participant "validate pod" as V #E3F6E8
+  participant "setup pod" as S #E3F6E8
+  participant "worker pods (x N)" as W #E3F6E8
+  participant "report pod" as R #E3F6E8
+end box
+
+box "Storage" #FFFAF0
+  database "MinIO / S3" as M #FFF3D9
+end box
+
+box "Systems under test" #FFF7F7
+  participant "APIs / DBs" as SUT #FDE7E7
+end box
+
+== Submit ==
+T -[#2F6FD6]> D : New run (plan, workers, env)
+D -[#2F6FD6]> K : create LoadTest
+O -[#2F6FD6]> K : reconcile (every 5 s)
+
+== Validate ==
+O -[#2F6FD6]> K : create Job "validate"
+K -[#2F6FD6]> V : start (init: git clone tests)
+V -> V : perf validate --facts-file /dev/termination-log
+V -[#2F6FD6]-> O : facts: valid, hasSetup, scenarios
+
+== Setup (only if the plan shares lists) ==
+alt plan has setup.share
+  O -[#2F6FD6]> K : create Job "setup"
+  S -[#C0392B]> SUT : setup steps (login, load list)
+  S -[#D98E04]> M : shared.json
+end
+
+== Load ==
+O -[#2F6FD6]> K : create Indexed Job "workers"\n(START_AT = now + delay)
+K -[#2F6FD6]> W : N pods (JOB_COMPLETION_INDEX = worker number)
+W -[#D98E04]> M : read shared.json (if any)
+W -> W : wait for START_AT
+note over W #E3F6E8 : all workers start together
+loop during the test
+  W -[#C0392B]> SUT : <color:#C0392B><b>load</b></color> (users / rates divided by N)
+  D -[#17A2B8]> W : <color:#17A2B8>GET /metrics</color> (live, every 3 s)
+end
+W -[#D98E04]> M : logs/worker-i.log + worker-i.json
+
+== Report ==
+O -[#2F6FD6]> K : create Job "report" (all workers succeeded)
+R -[#D98E04]> M : download logs
+R -> R : LogMerger + Gatling reports-only\n(SLAs judged on all data)
+R -[#D98E04]> M : report/merged/* + report/summary.json
+R -[#2F6FD6]-> O : facts: reportBuilt, slaPassed, report path
+O -[#2F6FD6]> K : status Completed,\nresult Passed / SLAFailed
+
+== View ==
+D -[#D98E04]> M : summary.json, worker-*.json, report files
+D -[#2F6FD6]-> T : final numbers + Open report
+
+legend right
+  <b>Arrows</b>
+  |<#2F6FD6><color:#FFFFFF> control </color>|
+  |<#C0392B><color:#FFFFFF> load </color>|
+  |<#D98E04><color:#FFFFFF> results data </color>|
+  |<#17A2B8><color:#FFFFFF> live metrics </color>|
+endlegend
+@enduml

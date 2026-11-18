@@ -1,0 +1,53 @@
+%% 1. System context: who uses labuk-gatling and what runs where
+flowchart LR
+    tester(["Perf tester / QA"])
+    ci(["CI pipeline<br/>Jenkins / GitLab"])
+    dev(["Framework developer"])
+    git[("Git repo<br/>YAML plans, API catalog, CSV")]
+
+    subgraph local["Tester's machine"]
+        cli["perf CLI<br/>validate | run | submit | status | fetch | convert-lr"]
+    end
+
+    subgraph k8s["Kubernetes cluster (on-prem)"]
+        direction TB
+        ingress["Ingress (nginx, TLS)<br/>perf-dashboard.codelabuk.dev"]
+        subgraph nsperf["namespace: perf"]
+            dashboard["perf-dashboard<br/>Flask API + React UI"]
+            operator["loadtest-operator<br/>2 replicas, leader election"]
+            crd[["LoadTest<br/>perf.codelabuk.org/v1alpha1"]]
+            subgraph jobs["Jobs of one run"]
+                validate["validate"]
+                setup["setup (once)"]
+                workers["workers x N<br/>Indexed Job, /metrics :9464"]
+                report["report (merge)"]
+            end
+        end
+        subgraph nsminio["namespace: minio"]
+            minio[("MinIO / S3<br/>bucket perf-results")]
+        end
+        prom["Prometheus + Grafana<br/>(optional)"]
+    end
+
+    subgraph sut["Systems under test"]
+        apis["HTTP / REST APIs"]
+        dbs[("Databases<br/>Oracle, PostgreSQL, ... via JDBC")]
+    end
+
+    tester -->|"browser, HTTPS"| ingress --> dashboard
+    tester --> cli
+    ci --> cli
+    dev -->|"mvn install, docker build, helm"| k8s
+    cli -->|"kubectl: LoadTest, ConfigMap"| crd
+    cli -->|"perf run (local load)"| apis
+    dashboard -->|"create / list / delete"| crd
+    operator -->|"watches"| crd
+    operator -->|"creates Jobs, reads results"| jobs
+    validate & setup & workers & report -.->|"clone tests"| git
+    workers -->|"load"| apis
+    workers -->|"load"| dbs
+    setup & workers & report -->|"shared lists, logs, report, summaries"| minio
+    dashboard -->|"live metrics"| workers
+    dashboard -->|"summaries, reports"| minio
+    prom -.->|"scrape"| workers
+    cli -->|"perf fetch"| minio

@@ -1,0 +1,57 @@
+@startuml 04-results-flow
+!include _theme.iuml
+title labuk-gatling - results and metrics (live while running, exact when finished)
+left to right direction
+
+node "each worker pod" <<run>> {
+  component "Gatling engine" as engine <<run>>
+  file "simulation.log\nbinary, written in chunks" as log <<run>>
+  component "LiveLogReader\nfollows the log" as reader <<obs>>
+  component "LiveMetrics\n:9464/metrics" as metrics <<obs>>
+  component "RunSummary\nworker-i.json" as wsum <<store>>
+}
+
+node "report pod" <<run>> {
+  component "LogMerger\nre-base timestamps, one log" as merger <<run>>
+  component "Gatling reports-only\nHTML + SLA verdict" as gatlingro <<run>>
+  component "RunSummary\n(t-digest, like the report)" as rsum <<run>>
+}
+
+database "MinIO / S3: perf-results/runs/RUN-FOLDER/" as store <<store>> {
+  file "shared.json" as shared <<store>>
+  file "logs/worker-i.log\nlogs/worker-i.json" as logs <<store>>
+  file "report/merged/index.html ..." as html <<store>>
+  file "report/summary.json" as summary <<store>>
+}
+
+component "perf-dashboard" as dash <<ctrl>>
+component "Prometheus / Grafana" as prom <<obs>>
+
+' inside the worker
+engine -[#2E8B57]-> log
+log -[#17A2B8]-> reader
+reader -[#17A2B8]-> metrics
+log -[#D98E04]-> wsum : at the end
+
+' final path
+log -[#D98E04,bold]-> logs : upload
+wsum -[#D98E04,bold]-> logs : upload
+logs -[#D98E04,bold]-> merger
+merger -[#2E8B57]-> gatlingro
+merger -[#2E8B57]-> rsum
+gatlingro -[#D98E04,bold]-> html
+rsum -[#D98E04,bold]-> summary
+
+' to the viewers
+metrics -[#17A2B8,dashed]-> dash : live, summed across workers
+metrics -[#17A2B8,dashed]-> prom : scrape
+logs -[#D98E04]-> dash : per-worker final
+summary -[#D98E04]-> dash : run final
+html -[#D98E04]-> dash : /reports/... in the browser
+
+legend right
+  <b>Two paths</b>
+  |<#17A2B8><color:#FFFFFF> live </color>| while running, from the growing log |
+  |<#D98E04><color:#FFFFFF> final </color>| after the run, exact, same as the HTML report |
+endlegend
+@enduml

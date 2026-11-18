@@ -1,0 +1,77 @@
+@startuml 05-engine
+!include _theme.iuml
+title labuk-gatling - engine internals (YAML to Gatling)
+left to right direction
+
+package "Test files (no code)" <<input>> {
+  file "plan.yaml\nscenarios, load, SLAs" as plan <<input>>
+  file "apis/*.yaml\nAPI catalog" as catalog <<input>>
+  file "data/*.csv" as data <<input>>
+  file "-DNAME=value / env vars\nfill the plan's placeholders" as env <<input>>
+  file "LoadRunner VuGen script" as vugen <<input>>
+}
+
+component "perf convert-lr\nVuGenConverter" as conv <<input>>
+component "PlanLoader\nplaceholders, includes,\ntypo + cross checks" as loader <<code>>
+component "TestPlan model\nsteps, auth, load, SLAs" as model <<code>>
+
+package "SimulationAssembler (per worker)" <<code>> {
+  component "Worker split\nusers, rates, CSV rows, shared lists" as split <<code>>
+  component "setup scenario\n(once) + shares" as setupscn <<code>>
+  component "ChainFactory\napi, transaction, pollUntil, forEach,\nif, retry, wait, pace, rendezvous ..." as chain <<code>>
+  component "AuthStrategy\nlogin / jwt / static, refresh" as auth <<code>>
+  component "injection + throttle" as inj <<code>>
+  component "SLAs -> Gatling assertions" as sla <<code>>
+}
+
+interface "Plugins (ServiceLoader)\nsql step, jdbc data source" as plugins <<code>>
+component "YamlSimulation" as sim <<ctrl>>
+
+package "Gatling runtime" <<run>> {
+  component "HTTP over Netty\n(non-blocking)" as netty <<run>>
+  component "SQL thread pool\nHikariCP per connection" as jdbc <<run>>
+}
+
+component "APIs" as apis <<sut>>
+database "Databases" as dbs <<sut>>
+
+' conversion
+vugen -[#B59F3B]-> conv
+conv -[#B59F3B]-> plan
+conv -[#B59F3B]-> catalog
+conv -[#B59F3B]-> data
+
+' loading
+plan -[#B59F3B]-> loader
+catalog -[#B59F3B]-> loader
+data -[#B59F3B]-> loader
+env -[#B59F3B]-> loader
+loader -[#6B4FBB,bold]-> model
+
+' assembly
+model -[#6B4FBB]-> split
+split -[#6B4FBB]-> setupscn
+split -[#6B4FBB]-> chain
+split -[#6B4FBB]-> inj
+chain -[#6B4FBB]-> auth
+chain -[#6B4FBB,dashed]-> plugins
+model -[#6B4FBB]-> sla
+setupscn -[#6B4FBB]-> sim
+chain -[#6B4FBB]-> sim
+inj -[#6B4FBB]-> sim
+sla -[#6B4FBB]-> sim
+
+' running
+sim -[#2E8B57,bold]-> netty
+sim -[#2E8B57,bold]-> jdbc
+netty -[#C0392B,bold]-> apis
+jdbc -[#C0392B,bold]-> dbs
+
+legend right
+  <b>Stages</b>
+  |<#FFFBEA> 1. test files (written by testers) |
+  |<#EFE8FB> 2. load, validate, assemble |
+  |<#E3F6E8> 3. Gatling runtime |
+  |<#FDE7E7> 4. systems under test |
+endlegend
+@enduml

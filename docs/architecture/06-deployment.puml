@@ -1,0 +1,66 @@
+@startuml 06-deployment
+!include _theme.iuml
+title labuk-gatling - deployment
+
+node "Build (developer / CI)" <<build>> {
+  artifact "mvn install\njars, perf zip, generated CRD" as mvn <<build>>
+  artifact "labuk-perf-runner\ngatling-runner/Dockerfile" as img_runner <<build>>
+  artifact "labuk-loadtest-operator\nloadtest-operator/Dockerfile" as img_op <<build>>
+  artifact "labuk-perf-dashboard\nperf-dashboard/Dockerfile" as img_dash <<build>>
+}
+database "Container registry\ne.g. Harbor / Nexus" as registry <<build>>
+actor Browser
+
+node "Kubernetes cluster" <<cluster>> {
+  collections "CRD loadtests.perf.codelabuk.org" as crd <<ctrl>>
+  component "ingress-nginx" as ingressctl <<ctrl>>
+  package "namespace: perf" <<ns>> {
+    component "Deployment loadtest-operator\n+ ServiceAccount, ClusterRole,\nLease Role (leader election)" as op <<ctrl>>
+    component "Deployment perf-dashboard\n+ Service, ClusterRole" as dash <<ctrl>>
+    component "Ingress perf-dashboard\nTLS: perf-dashboard-tls" as ing <<ctrl>>
+    component "Secrets: minio-creds,\nperf-secrets, git-creds" as sec <<input>>
+    component "Jobs + pods per LoadTest\n(runner image)" as runs <<run>>
+  }
+  package "namespace: minio" <<store>> {
+    database "MinIO\nbucket perf-results" as minio <<store>>
+  }
+}
+
+artifact "helm: charts/loadtest-operator" as helm_op <<build>>
+artifact "helm: charts/perf-dashboard" as helm_dash <<build>>
+
+' build and publish
+mvn -[#5B6B7F]-> img_runner
+mvn -[#5B6B7F]-> img_op
+img_runner -[#5B6B7F,bold]-> registry
+img_op -[#5B6B7F,bold]-> registry
+img_dash -[#5B6B7F,bold]-> registry
+
+' install
+helm_op -[#5B6B7F,dashed]-> op : installs
+helm_op -[#5B6B7F,dashed]-> crd
+helm_dash -[#5B6B7F,dashed]-> dash : installs
+helm_dash -[#5B6B7F,dashed]-> ing
+registry -[#5B6B7F,dashed]-> op : pull
+registry -[#5B6B7F,dashed]-> dash : pull
+registry -[#5B6B7F,dashed]-> runs : pull
+
+' traffic
+Browser -[#2F6FD6,bold]-> ingressctl : https://perf-dashboard.codelabuk.dev
+ingressctl -[#2F6FD6]-> ing
+ing -[#2F6FD6]-> dash
+op -[#2F6FD6]-> runs : creates Jobs
+runs -[#D98E04,bold]-> minio : results
+dash -[#D98E04]-> minio : reads results
+sec -[#B59F3B,dashed]-> runs : env
+sec -[#B59F3B,dashed]-> dash : env
+
+legend right
+  <b>Colour key</b>
+  |<#EEF1F5> build / images / charts |<#5B6B7F><color:#FFFFFF> build, install, pull </color>|
+  |<#E3EEFF> control plane |<#2F6FD6><color:#FFFFFF> traffic / control </color>|
+  |<#E3F6E8> run pods |<#D98E04><color:#FFFFFF> results data </color>|
+  |<#FFF3D9> storage |<#B59F3B><color:#FFFFFF> secrets as env </color>|
+  |<#FFFBEA> secrets | |
+endlegend
+@enduml
