@@ -11,7 +11,7 @@ package "Test files (no code) - a suite in S3, or Git for CI" <<input>> {
 file "Variables / env\nfill the plan's placeholders" as env <<input>>
 file "LoadRunner VuGen script" as vugen <<input>>
 
-component "perf convert-lr\nVuGenConverter" as conv <<input>>
+component "VuGenConverter\ndashboard: Import LoadRunner script\nCLI: perf convert-lr" as conv <<input>>
 component "fetch-tests init container\nperf fetch -> /tests" as fetch <<run>>
 component "PlanLoader\nplaceholders, includes,\ntypo + cross checks" as loader <<code>>
 component "TestPlan model\nsteps, auth, load, SLAs" as model <<code>>
@@ -38,7 +38,7 @@ database "Databases" as dbs <<sut>>
 
 ' conversion
 vugen -[#B59F3B]-> conv
-conv -[#B59F3B]-> plan : upload as a suite
+conv -[#B59F3B]-> plan : new suite
 conv -[#B59F3B]-> catalog
 conv -[#B59F3B]-> data
 

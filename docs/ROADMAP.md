@@ -67,7 +67,8 @@ limit still applies). Verified: `docker run --cpus=1 ... run` hung before, compl
 | Oracle-specific behaviour (REF CURSOR, PL/SQL OUT params, driver settings) - distributed SQL on a real DB | a dev Oracle database (or the Oracle Free container) |
 | Grafana dashboard in a real Grafana + Prometheus | a Grafana/Prometheus instance |
 | CI examples (`docs/ci/`) in a real Jenkins / GitLab | the team's CI |
-| LoadRunner: a real team script through `perf convert-lr`, numbers compared with LoadRunner's | a VuGen script + a LoadRunner run of the same scenario |
+| LoadRunner: a real team script through the import (dashboard) / `perf convert-lr`, numbers compared with LoadRunner's | a VuGen script + a LoadRunner run of the same scenario |
+| Browser (TruClient-style) load: `browser` steps on Playwright, separate runner image — agreed to do last | design agreed in outline |
 | First run on the production on-prem cluster | registry, MinIO bucket + credentials, access |
 
 ---
@@ -279,6 +280,7 @@ Design: [perf-dashboard-design.md](perf-dashboard-design.md). Flask + React, own
 | New run form → LoadTest | ✅ v1 — from saved test plans only (since 2026-11-18) |
 | History of run folders with final numbers | ✅ v1 |
 | Test plans: suites in S3 — create, upload (files / folder / zip), edit, download, delete, Run | ✅ 2026-11-18 |
+| Import LoadRunner script (VuGen folder / zip → new suite, conversion notes on screen; same converter as the CLI) | ✅ 2026-11-18 — verified on Docker Desktop (import, edit load, 2-worker run Passed) |
 | Delete runs and their results (History; Run detail with "also delete results") | ✅ 2026-11-18 |
 | Login (OIDC / SSO), audit of who started or deleted what | open |
 | Run-to-run comparison, PVC results, plan edit history | open |

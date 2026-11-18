@@ -695,7 +695,7 @@ as the spark-dashboard).
 | Runs | every LoadTest: phase, result, workers done/total, start, duration, report link |
 | Run detail | steps (validate → setup → workers → report), cards (requests, errors %, req/s, p95, users, SLAs), live throughput + users charts, per-request and per-transaction tables, errors, **workers table** (pod, node, state, restarts, requests, live users / p95, log viewer), the LoadTest spec, Stop & delete |
 | New run | form → LoadTest from a saved test plan (workers, CPU/memory, env, secrets, start delay, live metrics). Git and ConfigMap sources are for `perf submit`, CI and GitOps, not the dashboard |
-| Test plans | suites of test files in S3 (`s3://perf-results/test-plans/<suite>/`): create (with a starter plan), upload files, a folder or a zip (folders kept), edit YAML/CSV in the browser (YAML syntax checked on save), delete, download as zip, start a run from a plan |
+| Test plans | suites of test files in S3 (`s3://perf-results/test-plans/<suite>/`): create (with a starter plan), upload files, a folder or a zip (folders kept), **import a LoadRunner VuGen script** (converted to a new suite, notes shown), edit YAML/CSV in the browser (YAML syntax checked on save), delete, download as zip, start a run from a plan |
 | History | every run folder in the results bucket with its final numbers and report link; **Delete** removes the run's folder from S3 (refused while its run is active) |
 
 Deleting from *Run detail* removes the LoadTest (Jobs, pods); its results stay in S3 unless *also delete results in
@@ -703,7 +703,7 @@ S3* is ticked. Deleting results cannot be undone — for routine clean-up prefer
 `runs/` after 90 days). The dashboard's S3 credentials need write and delete rights on `test-plans/` and `runs/`.
 
 ```bash
-docker build -t labuk-perf-dashboard:1.0.0 perf-dashboard            # or push to your registry
+docker build -t labuk-perf-dashboard:1.0.0 perf-dashboard            # build the runner image first (Java + converter come from it)
 helm upgrade --install perf-dashboard charts/perf-dashboard -n perf   --set results.url=s3://perf-results/runs --set results.s3Endpoint=http://minio.minio.svc:9000   --set results.credentialsSecret=minio-creds                          # Secret with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
 kubectl -n perf port-forward svc/perf-dashboard 8080:80                # or --set ingress.enabled=true (host perf-dashboard.codelabuk.dev)
 ```
@@ -728,6 +728,14 @@ then `python -m pytest tests`; UI: `cd frontend && npm install && npm run dev` (
 
 ## LoadRunner scripts (`perf convert-lr`)
 
+**Testers:** dashboard → *Test plans* → **Import LoadRunner script**: choose the VuGen folder or a zip of it, give
+a new suite name, *Convert and save*. The suite gets the plan, API catalog, data and the conversion report; the
+notes are shown on screen. Set the load in the plan (editor), then *Run it*. Recording snapshots and other
+non-script files in the folder are ignored. The dashboard image contains Java and the perf distribution (copied
+from the runner image), so this is exactly the CLI's conversion.
+
+**Developers / CI:**
+
 ```bash
 perf convert-lr path/to/VuGenScript --out perf-tests/sr-flow     # [--iterations N]
 ```
@@ -750,7 +758,9 @@ scenario), `perf validate` and run it like any plan.
 | `if` / `for`, `lr_eval_string`, `web_link`, other parameter types, unknown calls | listed in the report |
 
 Verified with a recorded-style script (`gatling-runner/src/test/resources/lr/SR_Flow`): the converted plan runs
-in Gatling with every request and transaction OK, and ran distributed on Kubernetes (3 workers, Passed).
+in Gatling with every request and transaction OK, and ran distributed on Kubernetes (3 workers, Passed). Through
+the dashboard: imported as a zip, load set to 6 users in the editor, run on 2 workers — Completed / Passed,
+24 requests (12 + 12), 0 KO, the three LoadRunner transactions in the report.
 It is not a comparison against LoadRunner's own numbers - for that, run the same scenario in both tools.
 
 ---

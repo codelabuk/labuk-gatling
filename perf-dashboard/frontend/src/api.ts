@@ -1,4 +1,4 @@
-import type { DashboardConfig, FileContent, LiveMetrics, LoadTestDetail, LoadTestRow, RunFolder, Suite, SuiteDetail, SummaryResponse } from './types'
+import type { DashboardConfig, FileContent, LiveMetrics, LrImport, LoadTestDetail, LoadTestRow, RunFolder, Suite, SuiteDetail, SummaryResponse } from './types'
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...init })
@@ -40,6 +40,18 @@ export const api = {
     if (!res.ok) throw new Error((body as { error?: string }).error ?? `${res.status} ${res.statusText}`)
     return body as { uploaded: string[] }
   },
+}
+
+/** Converts a VuGen script (its folder's files, or a zip) into a new suite - same converter as `perf convert-lr`. */
+export async function importLoadRunner(suite: string, files: { path: string; file: File }[], iterations: number): Promise<LrImport> {
+  const form = new FormData()
+  form.append('suite', suite)
+  form.append('iterations', String(iterations))
+  files.forEach((f) => form.append('files', f.file, f.path))
+  const res = await fetch('/api/plans/import-lr', { method: 'POST', body: form })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error((body as { error?: string }).error ?? `${res.status} ${res.statusText}`)
+  return body as LrImport
 }
 
 export const suiteDownloadUrl = (suite: string) => `/api/plans/${suite}/download`

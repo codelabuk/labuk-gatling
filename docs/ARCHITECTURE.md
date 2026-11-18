@@ -154,7 +154,7 @@ flowchart TB
         end
         subgraph dashboard["perf-dashboard (Python + TypeScript)"]
             dash_api["Flask routes<br/>api (runs, delete), plans, reports"]
-            dash_store["kube, live, storage,<br/>plan_store (suites in S3)"]
+            dash_store["kube, live, storage,<br/>plan_store (suites in S3), lr_import"]
             dash_ui["React<br/>Runs, Run detail, New run,<br/>Test plans, History"]
         end
         subgraph charts["Helm charts"]
@@ -181,6 +181,7 @@ flowchart TB
     op_crd -.->|"copied into"| chart_op
     dash_ui --> dash_api --> dash_store
     dash_store -.->|"reads / creates LoadTests"| op_crd
+    dash_store -.->|"runs convert-lr (Java + perf from the runner image)"| lr
     chart_dash -.-> dashboard
 ```
 
@@ -232,8 +233,10 @@ s3://perf-results/test-plans/orders-api/     a suite (Test plans page) - or a Gi
   e.g. `BASE_URL` per environment, secrets from Kubernetes Secrets).
 - **Load**: open (arrival rate), closed (concurrency) and stepped models; rates in `/s`, `/min`, `/h`; throttle.
 - **SLAs**: `global.*`, `api.<name>.*`, `transaction.<name>.*` response-time percentiles, error %, throughput.
-- **LoadRunner**: `perf convert-lr` turns a VuGen web script (`vuser_init.c`, `Action*.c`, `vuser_end.c`,
-  `.prm`/`.dat`) into the same files, with a report of anything not converted.
+- **LoadRunner**: a VuGen web script (`vuser_init.c`, `Action*.c`, `vuser_end.c`, `.prm`/`.dat`) is converted
+  into the same files, with a report of anything not converted — by testers with **Import LoadRunner script** on
+  the *Test plans* page (the result becomes a new suite), by developers and CI with `perf convert-lr`. Both run
+  the same converter: the dashboard image carries Java and the perf distribution from the runner image.
 
 ---
 
@@ -249,8 +252,8 @@ flowchart LR
         env["Variables / env<br/>fill ${NAME}"]
     end
     vugen["LoadRunner VuGen script"]
-    conv["perf convert-lr<br/>VuGenConverter"]
-    vugen --> conv -->|"upload as a suite"| plan & catalog & data
+    conv["VuGenConverter<br/>dashboard: Import LoadRunner script<br/>CLI: perf convert-lr"]
+    vugen --> conv -->|"new suite"| plan & catalog & data
 
     fetch["fetch-tests init container<br/>perf fetch -> /tests"]
     plan & catalog & data --> fetch
@@ -545,7 +548,7 @@ flowchart TB
 |---|---|---|
 | `labuk-perf-runner` | `gatling-runner/Dockerfile` (or Jib) | Non-root; heap = 75 % of the container memory limit; extra JDBC drivers in `/opt/perf/drivers` |
 | `labuk-loadtest-operator` | `loadtest-operator/Dockerfile` (or Jib) | One or two replicas |
-| `labuk-perf-dashboard` | `perf-dashboard/Dockerfile` | Node build stage, Python runtime |
+| `labuk-perf-dashboard` | `perf-dashboard/Dockerfile` | Node build stage, Python runtime, plus Java and `/opt/perf` from the runner image (LoadRunner import) — build the runner image first |
 | `charts/loadtest-operator` | Helm | CRD in `crds/` (kept identical to the generated one by the build), RBAC, Lease role, Deployment |
 | `charts/perf-dashboard` | Helm | RBAC, Deployment, Service, optional Ingress with TLS |
 

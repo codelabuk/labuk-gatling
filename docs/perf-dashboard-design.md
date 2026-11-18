@@ -17,7 +17,7 @@ using the `perf` CLI / LoadTest resources, which also accept Git or a ConfigMap 
 | **Run detail** | Phase timeline; summary cards (requests, errors %, req/s, p95); live chart while running; per-request table; **workers table** (pod, node, state, restarts, live req/s and users per worker, log viewer); **Report** button; the LoadTest spec; **Delete** (optionally *also delete results in S3*) | Kubernetes API, worker `/metrics`, MinIO |
 | **Report** | The merged Gatling HTML report, served straight from MinIO in the browser | MinIO (`perf-results/runs/<run>/report/merged/…`) |
 | **New run** | Form: **suite + plan** (dropdowns of saved test plans), workers, image, env, secrets, CPU/memory, start delay → creates a LoadTest | MinIO (suites), Kubernetes API |
-| **Test plans** | Suites of test files: create (with a starter plan), upload files / a folder / a zip, edit YAML and CSV in the browser, download as zip, delete files or suites, **Run** a plan | MinIO (`perf-results/test-plans/<suite>/…`) |
+| **Test plans** | Suites of test files: create (with a starter plan), upload files / a folder / a zip, **import a LoadRunner VuGen script**, edit YAML and CSV in the browser, download as zip, delete files or suites, **Run** a plan | MinIO (`perf-results/test-plans/<suite>/…`) |
 | **History** | All run folders in MinIO, including runs whose LoadTest was deleted, with their final numbers; **Delete** a run's results | MinIO (`summary.json`) |
 
 ## Architecture
@@ -61,6 +61,20 @@ sizes, YAML syntax — and nothing is written if any file fails.
 
 **Saving** checks YAML syntax only. The full plan check (unknown keys, APIs, data files, SLA targets) runs in the
 run's validate step and shows up as the run's error message.
+
+### Import LoadRunner script
+
+Testers convert VuGen **web (HTTP/HTML)** scripts without the CLI. The tester picks the script folder or a zip,
+a new suite name and the Action iterations. The backend (`lr_import.py`):
+1. keeps only script files (`.c`, `.h`, `.prm`, `.dat`, `.usr`, `.cfg`, `.csv`, `.txt`) — recording snapshots,
+   logs and result folders are skipped; paths that leave the folder reject the upload;
+2. finds the script folder (where `Action*.c` / `vuser_init.c` are; more than one script is refused);
+3. runs the real converter: `java … org.codelabuk.perf.runner.Perf convert-lr <dir> --out <dir> --iterations N`
+   (heap 256 MB, 60 s timeout). Java and the perf distribution are copied **from the runner image** into the
+   dashboard image, so the dashboard and the CLI always convert the same way;
+4. stores the output (plan named after the script's `.usr` / `.prm`, API catalog, data, `<name>-conversion.txt`)
+   as the new suite and returns the notes, which the page shows with the next steps (set the load, run).
+Nothing is stored if any step fails; an existing suite is never overwritten.
 
 ### Deleting
 
@@ -108,6 +122,7 @@ better than deleting by hand.
 | `GET` / `PUT` / `DELETE /api/plans/<suite>/file?path=…` | read (text up to 2 MB) / save (YAML syntax checked) / delete one file |
 | `POST /api/plans/<suite>/upload` | multipart `files` (name = path in the suite), optional `folder`, `unzip` |
 | `GET /api/plans/<suite>/download` | the suite as a zip |
+| `POST /api/plans/import-lr` | multipart `suite` (new), `iterations`, `files` (VuGen folder files or a zip) → new suite + conversion notes |
 | `GET /reports/<key>` | streams report files from MinIO (only keys under the runs prefix; no `..`) |
 
 Path safety: suite names are `[A-Za-z0-9][A-Za-z0-9._-]{0,62}`; file paths are plain folder and file names
@@ -115,7 +130,10 @@ Path safety: suite names are `[A-Za-z0-9][A-Za-z0-9._-]{0,62}`; file paths are p
 whole upload. Run folders must look like `<loadtest-name>-<uid8>` and sit under the results prefix.
 
 ## Deployment
-- Image: multi-stage Dockerfile (Node build → Python slim + gunicorn, 1 worker process, 8 threads).
+- Image: multi-stage Dockerfile (Node build → Python slim + gunicorn, 1 worker process, 8 threads), plus Java 17
+  and `/opt/perf` copied from the runner image (`--build-arg RUNNER_IMAGE=…`, default
+  `labuk-perf-runner:1.0-SNAPSHOT`) for the LoadRunner import. Memory limit 768 Mi (a conversion starts a
+  short-lived JVM with a 256 MB heap).
 - Helm chart `charts/perf-dashboard`: Deployment, Service, optional Ingress, ServiceAccount + ClusterRole
   (`loadtests` get/list/watch/create/delete, `jobs` get/list, `pods` + `pods/log` get/list), watched namespaces,
   default runner image, S3 settings: `results.url` (`RESULTS_URL`), `results.plansUrl` (`PLANS_URL`),
@@ -138,13 +156,16 @@ whole upload. Run folders must look like `<loadtest-name>-<uid8>` and sit under 
 - Live metrics are polled, not streamed; no run-to-run comparison yet.
 
 ## Testing
-- Backend (pytest, 50 tests): Kubernetes client faked; S3 through an in-memory MinIO fake (`tests/fake_s3.py`)
+- Backend (pytest, 61 tests): Kubernetes client faked; S3 through an in-memory MinIO fake (`tests/fake_s3.py`)
   so the real storage code runs — suites, upload (files, folder, zip), editing, YAML errors, path and zip
   safety, runs from a suite, deleting results (and the 409 while active), metrics parsing and summing, report
-  path guard.
+  path guard; LoadRunner import with the **real converter** from the local build (zip and folder uploads,
+  iterations, skipped files, bad uploads and failed conversions store nothing, missing Java).
 - Operator: `LoadTestFlowTest` checks the `fetch-tests` init containers (validate snapshots, later pods read the
   copy, only the S3 credentials are passed).
 - `RunSummary`: Scala unit test against the real Gatling log fixture.
 - End to end on Docker Desktop Kubernetes: upload a suite as a zip, start a 3-worker run from it (Completed,
   Passed; worker totals add up to the merged report), open the report through `/reports/…`, delete a run with
-  its results (refused while active, then 50 objects removed, its report 404, other runs untouched).
+  its results (refused while active, then 50 objects removed, its report 404, other runs untouched); import the
+  sample VuGen script as a zip (4 requests, 5 notes, snapshot ignored), set 6 users in the editor, run on 2
+  workers (Completed / Passed, 24 requests = 12 + 12, 0 KO).

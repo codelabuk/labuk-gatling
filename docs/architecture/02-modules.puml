@@ -36,7 +36,7 @@ package "loadtest-operator (Java)" as operator <<ns>> {
 
 package "perf-dashboard (Python + TypeScript)" as dashboard <<ns>> {
   component "Flask routes\napi (runs, delete), plans, reports" as d_api <<ctrl>>
-  component "kube, live, storage,\nplan_store (suites in S3)" as d_store <<store>>
+  component "kube, live, storage,\nplan_store (suites in S3), lr_import" as d_store <<store>>
   component "React\nRuns, Run detail, New run,\nTest plans, History" as d_ui <<ctrl>>
 }
 
@@ -81,6 +81,7 @@ o_crd -[#5B6B7F,dashed]-> h_op : copied into
 d_ui -[#2F6FD6]-> d_api
 d_api -[#2F6FD6]-> d_store
 d_store -[#2F6FD6,dashed]-> o_crd : reads / creates LoadTests
+d_store -[#B59F3B,dashed]-> r_lr : runs convert-lr\n(Java + perf from the runner image)
 h_dash -[#5B6B7F,dashed]-> dashboard : installs
 
 legend right

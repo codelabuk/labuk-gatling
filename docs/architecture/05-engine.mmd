@@ -7,8 +7,8 @@ flowchart LR
         env["Variables / env<br/>fill ${NAME}"]
     end
     vugen["LoadRunner VuGen script"]
-    conv["perf convert-lr<br/>VuGenConverter"]
-    vugen --> conv -->|"upload as a suite"| plan & catalog & data
+    conv["VuGenConverter<br/>dashboard: Import LoadRunner script<br/>CLI: perf convert-lr"]
+    vugen --> conv -->|"new suite"| plan & catalog & data
 
     fetch["fetch-tests init container<br/>perf fetch -> /tests"]
     plan & catalog & data --> fetch

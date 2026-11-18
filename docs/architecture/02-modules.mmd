@@ -32,7 +32,7 @@ flowchart TB
         end
         subgraph dashboard["perf-dashboard (Python + TypeScript)"]
             dash_api["Flask routes<br/>api (runs, delete), plans, reports"]
-            dash_store["kube, live, storage,<br/>plan_store (suites in S3)"]
+            dash_store["kube, live, storage,<br/>plan_store (suites in S3), lr_import"]
             dash_ui["React<br/>Runs, Run detail, New run,<br/>Test plans, History"]
         end
         subgraph charts["Helm charts"]
@@ -59,4 +59,5 @@ flowchart TB
     op_crd -.->|"copied into"| chart_op
     dash_ui --> dash_api --> dash_store
     dash_store -.->|"reads / creates LoadTests"| op_crd
+    dash_store -.->|"runs convert-lr (Java + perf from the runner image)"| lr
     chart_dash -.-> dashboard

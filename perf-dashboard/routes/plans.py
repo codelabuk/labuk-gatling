@@ -1,6 +1,7 @@
 """Test plans in S3 / MinIO: suites (folders) of plans, API catalogs and data, managed from the dashboard."""
 from flask import Blueprint, Response, jsonify, request
 
+import lr_import
 import plan_store
 from plan_store import PlanError
 
@@ -21,6 +22,17 @@ def list_suites():
 def create_suite():
     name = plan_store.create_suite((request.get_json(force=True) or {}).get("name"))
     return jsonify({"name": name, "url": plan_store.suite_url(name), "files": plan_store.list_files(name)}), 201
+
+
+@bp.post("/import-lr")
+def import_loadrunner():
+    """multipart: suite (new name), iterations, files = the VuGen script folder's files or a zip of it."""
+    files = [(f.filename or "", f.read()) for f in request.files.getlist("files")]
+    try:
+        iterations = int(request.form.get("iterations") or 1)
+    except ValueError:
+        raise PlanError("iterations must be a number")
+    return jsonify(lr_import.import_script(request.form.get("suite"), files, iterations)), 201
 
 
 @bp.delete("/<suite>")

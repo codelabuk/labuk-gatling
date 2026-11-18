@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import { api, suiteDownloadUrl } from '../api'
+import { LrImport } from '../components/LrImport'
 import { fmtNum, fmtTime } from '../format'
 import type { SuiteFile } from '../types'
 
@@ -15,6 +16,7 @@ export function PlansPage() {
   const qc = useQueryClient()
   const suites = useQuery({ queryKey: ['suites'], queryFn: api.suites })
   const [newName, setNewName] = useState('')
+  const [importing, setImporting] = useState(false)
 
   const create = useMutation({
     mutationFn: () => api.createSuite(newName.trim()),
@@ -33,7 +35,9 @@ export function PlansPage() {
           <h1>Test plans</h1>
           <div className="sub">Saved in the results bucket; a run takes a copy, so editing here never changes a running test.</div>
         </div>
+        <div className="actions"><button className="btn ghost" onClick={() => setImporting(!importing)}>Import LoadRunner script</button></div>
       </div>
+      {importing && <LrImport onClose={() => setImporting(false)} />}
       <div className="plans">
         <div className="card suites">
           <form className="form new-suite" onSubmit={submit}>

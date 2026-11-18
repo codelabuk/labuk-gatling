@@ -119,3 +119,14 @@ export interface FileContent {
   content: string | null
   editable: boolean
 }
+
+/** Result of importing a LoadRunner VuGen script as a new suite. */
+export interface LrImport {
+  suite: string
+  plan: string
+  report: string | null
+  requests: number | null
+  notes: string[]
+  files: string[]
+  skipped: number
+}
