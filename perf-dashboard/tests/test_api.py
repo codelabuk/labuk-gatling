@@ -4,6 +4,7 @@ import pytest
 
 import config
 import kube
+import plan_store
 import storage
 from app import create_app
 from routes import api
@@ -31,6 +32,8 @@ def client(monkeypatch):
     deleted = {}
     monkeypatch.setattr(kube, "delete_loadtest", lambda ns, name: deleted.setdefault("name", name))
     monkeypatch.setattr(storage, "run_summary", lambda run_dir: {"run": {"users": 9}, "workers": [{"worker": 0}]})
+    monkeypatch.setattr(config, "PLANS_URL", "s3://perf-results/test-plans")
+    monkeypatch.setattr(plan_store, "file_exists", lambda suite, path: True)
     c = create_app().test_client()
     c.created, c.deleted = created, deleted
     return c
@@ -60,24 +63,26 @@ def test_metrics_with_no_running_workers(client):
 
 def test_create_builds_a_valid_loadtest(client):
     r = client.post("/api/loadtests", json={
-        "plan": {"file": "plans/orders.yaml", "git": {"repo": "https://git/x.git", "ref": "main"}},
+        "plan": {"file": "plans/orders.yaml", "suite": "orders"},
         "workers": 4, "env": {"BASE_URL": "https://sit"}, "secretRefs": ["perf-secrets"], "memory": "2Gi"})
     assert r.status_code == 201
     body = client.created["body"]
     assert body["kind"] == "LoadTest" and body["metadata"]["name"].startswith("orders-")
     spec = body["spec"]
-    assert spec["workers"] == 4 and spec["plan"]["git"]["repo"] == "https://git/x.git"
+    assert spec["workers"] == 4 and spec["plan"] == {"file": "plans/orders.yaml", "s3": "s3://perf-results/test-plans/orders"}
     assert spec["results"]["s3"]["url"] == "s3://perf-results/runs" and spec["metrics"]["enabled"]
     assert spec["resources"]["limits"]["memory"] == "2Gi" and spec["env"] == {"BASE_URL": "https://sit"}
 
 
 @pytest.mark.parametrize("body,error", [
-    ({"plan": {"git": {"repo": "r"}}}, "plan.file"),
-    ({"plan": {"file": "p.yaml"}}, "exactly one test source"),
-    ({"plan": {"file": "p.yaml", "configMap": "c", "git": {"repo": "r"}}}, "exactly one test source"),
-    ({"plan": {"file": "p.yaml", "configMap": "c"}, "workers": 0}, "between 1 and 200"),
-    ({"plan": {"file": "p.yaml", "configMap": "c"}, "name": "Bad_Name"}, "lower case"),
-    ({"plan": {"file": "p.yaml", "configMap": "c"}, "namespace": "kube-system"}, "not watched"),
+    ({"plan": {"suite": "s"}}, "plan.file"),
+    ({"plan": {"file": "p.yaml"}}, "saved test plan suite"),
+    ({"plan": {"file": "p.yaml", "configMap": "c"}}, "saved test plan suite"),       # not offered from the dashboard
+    ({"plan": {"file": "p.yaml", "git": {"repo": "r"}}}, "saved test plan suite"),
+    ({"plan": {"file": "p.yaml", "suite": "../x"}}, "suite name"),
+    ({"plan": {"file": "p.yaml", "suite": "s"}, "workers": 0}, "between 1 and 200"),
+    ({"plan": {"file": "p.yaml", "suite": "s"}, "name": "Bad_Name"}, "lower case"),
+    ({"plan": {"file": "p.yaml", "suite": "s"}, "namespace": "kube-system"}, "not watched"),
 ])
 def test_create_rejects_bad_input(client, body, error):
     r = client.post("/api/loadtests", json=body)

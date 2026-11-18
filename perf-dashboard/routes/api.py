@@ -133,15 +133,15 @@ def build_loadtest(body):
     file = (plan.get("file") or "").strip()
     if not file:
         raise ValueError("plan.file is required")
-    git, cm, suite = plan.get("git") or {}, (plan.get("configMap") or "").strip(), (plan.get("suite") or "").strip()
-    if [bool(git.get("repo")), bool(cm), bool(suite)].count(True) != 1:
-        raise ValueError("choose exactly one test source: saved test plans, a Git repository or a ConfigMap")
-    if suite:
-        try:
-            if not plan_store.file_exists(suite, file):
-                raise ValueError(f"{file} is not in the saved suite {suite}")
-        except plan_store.PlanError as e:
-            raise ValueError(str(e))
+    # runs from the dashboard use saved test plans (S3); Git / ConfigMap sources are for perf submit, CI and GitOps
+    suite = (plan.get("suite") or "").strip()
+    if not suite:
+        raise ValueError("choose a saved test plan suite (plan.suite)")
+    try:
+        if not plan_store.file_exists(suite, file):
+            raise ValueError(f"{file} is not in the saved suite {suite}")
+    except plan_store.PlanError as e:
+        raise ValueError(str(e))
     try:
         workers = int(body.get("workers", 1))
     except (TypeError, ValueError):
@@ -154,15 +154,7 @@ def build_loadtest(body):
     if not _NAME.match(name) or len(name) > 60:
         raise ValueError("name must be lower case letters, digits and '-', at most 60 characters")
 
-    spec_plan = {"file": file}
-    if suite:
-        spec_plan["s3"] = plan_store.suite_url(suite)   # the validate pod copies it into the run folder
-    elif cm:
-        spec_plan["configMap"] = cm
-    else:
-        spec_plan["git"] = {"repo": git["repo"].strip(), "ref": (git.get("ref") or "main").strip()}
-        if git.get("tokenSecret"):
-            spec_plan["git"]["tokenSecret"] = {"name": git["tokenSecret"].strip()}
+    spec_plan = {"file": file, "s3": plan_store.suite_url(suite)}   # the validate pod copies it into the run folder
     spec = {
         "image": (body.get("image") or config.DEFAULT_IMAGE).strip(),
         "plan": spec_plan,

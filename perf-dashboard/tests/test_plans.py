@@ -135,8 +135,6 @@ def test_run_from_a_saved_suite_needs_the_plan_file(client):
     _upload(client, "sr-flow", {"plans/sr.yaml": PLAN})
     r = client.post("/api/loadtests", json={"plan": {"suite": "sr-flow", "file": "plans/missing.yaml"}})
     assert r.status_code == 400 and "not in the saved suite" in r.get_json()["error"]
-    r = client.post("/api/loadtests", json={"plan": {"suite": "sr-flow", "file": "plans/sr.yaml", "configMap": "c"}})
-    assert r.status_code == 400 and "exactly one test source" in r.get_json()["error"]
 
 
 # ------------------------------------------------------------------ deleting results

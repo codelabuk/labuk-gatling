@@ -687,7 +687,7 @@ as the spark-dashboard).
 |---|---|
 | Runs | every LoadTest: phase, result, workers done/total, start, duration, report link |
 | Run detail | steps (validate → setup → workers → report), cards (requests, errors %, req/s, p95, users, SLAs), live throughput + users charts, per-request and per-transaction tables, errors, **workers table** (pod, node, state, restarts, requests, live users / p95, log viewer), the LoadTest spec, Stop & delete |
-| New run | form → LoadTest (saved test plan, Git or ConfigMap; workers, CPU/memory, env, secrets, start delay, live metrics) |
+| New run | form → LoadTest from a saved test plan (workers, CPU/memory, env, secrets, start delay, live metrics). Git and ConfigMap sources are for `perf submit`, CI and GitOps, not the dashboard |
 | Test plans | suites of test files in S3 (`s3://perf-results/test-plans/<suite>/`): create (with a starter plan), upload files, a folder or a zip (folders kept), edit YAML/CSV in the browser (YAML syntax checked on save), delete, download as zip, start a run from a plan |
 | History | every run folder in the results bucket with its final numbers and report link; **Delete** removes the run's folder from S3 (refused while its run is active) |
 

@@ -14,15 +14,13 @@ export function NewRunPage() {
   const qc = useQueryClient()
   const [params] = useSearchParams()   // ?suite=&file= from the Test plans page's Run button
   const cfg = useQuery({ queryKey: ['config'], queryFn: api.config })
-  const [source, setSource] = useState<'suite' | 'git' | 'configMap'>('suite')
   const [form, setForm] = useState({
     namespace: '', name: '', image: '', file: params.get('file') ?? '', suite: params.get('suite') ?? '',
-    repo: '', ref: 'main', tokenSecret: '', configMap: '',
     workers: '2', env: '', secrets: '', scenarios: '', cpu: '', memory: '1Gi', startDelaySeconds: '30', metrics: true,
   })
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value })
-  const suites = useQuery({ queryKey: ['suites'], queryFn: api.suites, enabled: source === 'suite' })
-  const suite = useQuery({ queryKey: ['suite', form.suite], queryFn: () => api.suite(form.suite), enabled: source === 'suite' && !!form.suite })
+  const suites = useQuery({ queryKey: ['suites'], queryFn: api.suites })
+  const suite = useQuery({ queryKey: ['suite', form.suite], queryFn: () => api.suite(form.suite), enabled: !!form.suite })
   const planFiles = (suite.data?.files ?? []).filter((f) => f.plan)
 
   const create = useMutation({
@@ -31,11 +29,7 @@ export function NewRunPage() {
       name: form.name || undefined,
       image: form.image || undefined,
       workers: Number(form.workers),
-      plan: source === 'suite'
-        ? { file: form.file, suite: form.suite }
-        : source === 'git'
-          ? { file: form.file, git: { repo: form.repo, ref: form.ref, tokenSecret: form.tokenSecret || undefined } }
-          : { file: form.file, configMap: form.configMap },
+      plan: { file: form.file, suite: form.suite },
       env: parseEnv(form.env),
       secretRefs: parseList(form.secrets),
       scenarios: parseList(form.scenarios),
@@ -58,13 +52,7 @@ export function NewRunPage() {
       <form className="card form" onSubmit={submit}>
         <fieldset>
           <legend>Test plan</legend>
-          <div className="seg">
-            <button type="button" className={source === 'suite' ? 'on' : ''} onClick={() => setSource('suite')}>Saved test plans</button>
-            <button type="button" className={source === 'git' ? 'on' : ''} onClick={() => setSource('git')}>Git repository</button>
-            <button type="button" className={source === 'configMap' ? 'on' : ''} onClick={() => setSource('configMap')}>ConfigMap</button>
-          </div>
-          {source === 'suite' ? (
-            <>
+          <>
               <div className="row3">
                 <label>Suite<select required value={form.suite} onChange={(e) => setForm({ ...form, suite: e.target.value, file: '' })}>
                   <option value="">choose…</option>
@@ -80,17 +68,7 @@ export function NewRunPage() {
                 </div>
               </div>
               {suites.error && <div className="alert bad">{(suites.error as Error).message}</div>}
-            </>
-          ) : source === 'git' ? (
-            <div className="row3">
-              <label>Repository URL<input required value={form.repo} onChange={set('repo')} placeholder="https://git.example.com/qa/perf-tests.git" /></label>
-              <label>Branch, tag or commit<input value={form.ref} onChange={set('ref')} /></label>
-              <label>Token secret (private repo)<input value={form.tokenSecret} onChange={set('tokenSecret')} placeholder="git-creds" /></label>
-            </div>
-          ) : (
-            <label>ConfigMap with the test files<input required value={form.configMap} onChange={set('configMap')} placeholder="sr-tests" /></label>
-          )}
-          {source !== 'suite' && <label>Plan file<input required value={form.file} onChange={set('file')} placeholder={source === 'git' ? 'plans/orders.yaml (relative to the repository)' : 'orders.yaml (a key of the ConfigMap)'} /></label>}
+          </>
         </fieldset>
 
         <fieldset>
