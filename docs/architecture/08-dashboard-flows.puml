@@ -1,0 +1,72 @@
+@startuml 08-dashboard-flows
+!include _theme.iuml
+title perf-dashboard - main flows
+autonumber "<b>[00]"
+
+actor Tester as T
+box "perf-dashboard pod" #F4F8FF
+  participant "React app" as UI #E3EEFF
+  participant "Flask API" as API #EFE8FB
+  participant "Java\n(convert-lr)" as J #F4F6F8
+end box
+box "Kubernetes" #F3FBF5
+  participant "Kubernetes API" as K #E3EEFF
+  participant "worker pods" as W #E3F6E8
+end box
+box "Storage" #FFFAF0
+  database "MinIO" as M #FFF3D9
+end box
+
+== Test plans ==
+T -[#B59F3B]> UI : create suite / upload zip or folder / edit file
+UI -[#B59F3B]> API : POST /api/plans, /upload, PUT /file
+API -> API : check names, paths, sizes, YAML syntax
+API -[#B59F3B]> M : put test-plans/SUITE/...
+
+== Import LoadRunner script ==
+T -[#B59F3B]> UI : VuGen folder or zip + new suite name
+UI -[#B59F3B]> API : POST /api/plans/import-lr
+API -> API : keep script files only, find Action*.c
+API -[#B59F3B]> J : perf convert-lr DIR --out DIR (256 MB, 60 s)
+J -[#B59F3B]-> API : plan, API catalog, data, conversion report
+API -[#B59F3B]> M : put test-plans/SUITE/... (nothing if any step failed)
+API -[#B59F3B]-> UI : notes + next steps
+
+== Start a run ==
+T -[#2F6FD6]> UI : New run (suite, plan, workers, env)
+UI -[#2F6FD6]> API : POST /api/loadtests
+API -[#B59F3B]> M : plan file exists in the suite?
+API -[#2F6FD6]> K : create LoadTest (plan.s3 = suite)
+API -[#2F6FD6]-> UI : run created - open Run detail
+
+== Live view (while Running) ==
+loop every 3 s
+  UI -[#17A2B8]> API : GET /api/loadtests/NS/NAME, /metrics
+  API -[#2F6FD6]> K : LoadTest status, Jobs, Pods
+  API -[#17A2B8]> W : GET /metrics on every running worker (parallel)
+  API -[#17A2B8]-> UI : per-worker + summed counters\n(finished workers keep their last numbers)
+end
+
+== Final numbers and report ==
+UI -[#D98E04]> API : GET /summary
+API -[#D98E04]> M : report/summary.json + logs/worker-i.json
+T -[#D98E04]> UI : Open report
+UI -[#D98E04]> API : GET /reports/runs/RUN/report/merged/index.html (+ js, css)
+API -[#D98E04]> M : stream objects (only under runs/, no ..)
+
+== Delete ==
+T -[#C0392B]> UI : Delete run (+ results) / History: Delete
+UI -[#C0392B]> API : DELETE /api/loadtests/NS/NAME?results=true\nor /api/runs/FOLDER
+API -[#2F6FD6]> K : run still active? then 409
+API -[#C0392B]> M : delete runs/RUN/ (logs, report, summary, tests copy)
+API -[#2F6FD6]> K : delete LoadTest (Jobs, pods go with it)
+
+legend right
+  <b>Arrows</b>
+  |<#B59F3B><color:#FFFFFF> test plans / import </color>|
+  |<#2F6FD6><color:#FFFFFF> runs, Kubernetes </color>|
+  |<#17A2B8><color:#FFFFFF> live metrics </color>|
+  |<#D98E04><color:#FFFFFF> results, reports </color>|
+  |<#C0392B><color:#FFFFFF> delete </color>|
+endlegend
+@enduml

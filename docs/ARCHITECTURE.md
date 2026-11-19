@@ -488,6 +488,59 @@ perf-results/runs/<run>-<uid8>/
 
 ## 7. perf-dashboard
 
+```mermaid
+%% 7. perf-dashboard: pages, API, backend modules and what they talk to
+flowchart LR
+    tester(["Perf tester / QA<br/>browser"])
+
+    subgraph ui["React app (Vite build, served by Flask)"]
+        runs_p["Runs<br/>all LoadTests"]
+        run_p["Run detail<br/>phases, live cards + charts,<br/>workers table, logs, Delete"]
+        new_p["New run<br/>suite + plan, workers, env"]
+        plans_p["Test plans<br/>suites, editor, upload,<br/>Import LoadRunner script"]
+        hist_p["History<br/>run folders, Delete"]
+    end
+
+    subgraph api["Flask (gunicorn: 1 process, 8 threads)"]
+        r_api["routes/api.py<br/>/api/loadtests, /metrics, /summary,<br/>/api/runs, /api/pods/.../logs"]
+        r_plans["routes/plans.py<br/>/api/plans/..., /import-lr"]
+        r_rep["routes/reports.py<br/>/reports/key"]
+        kube["kube.py<br/>LoadTests, Jobs, Pods, logs"]
+        live["live.py<br/>scrape + sum /metrics,<br/>remembers finished workers"]
+        storage["storage.py<br/>summaries, run folders,<br/>report files, delete"]
+        pstore["plan_store.py<br/>suites: list, read, save,<br/>upload, zip, delete"]
+        lri["lr_import.py<br/>VuGen upload -> convert -> suite"]
+    end
+
+    java["Java 17 + /opt/perf<br/>perf convert-lr<br/>(copied from the runner image)"]
+    k8s["Kubernetes API<br/>LoadTest, Job, Pod, logs"]
+    workers["worker pods<br/>:9464/metrics"]
+    minio[("MinIO bucket perf-results<br/>test-plans/ + runs/")]
+
+    tester -->|"HTTPS via ingress"| ui
+    runs_p & run_p & new_p & hist_p --> r_api
+    plans_p --> r_plans
+    run_p & hist_p -->|"Open report"| r_rep
+
+    r_api --> kube & live & storage
+    r_api -->|"New run: suite + plan exist?"| pstore
+    r_plans --> pstore & lri
+    r_rep --> storage
+    lri --> java
+    lri --> pstore
+
+    kube --> k8s
+    live --> workers
+    storage --> minio
+    pstore --> minio
+```
+
+<sub>Source: [`architecture/07-dashboard-components.mmd`](architecture/07-dashboard-components.mmd) · PlantUML: [`architecture/07-dashboard-components.puml`](architecture/07-dashboard-components.puml)</sub>
+
+The main flows (test plans, LoadRunner import, start a run, live view, report, delete) are in
+[`08-dashboard-flows`](architecture/08-dashboard-flows.mmd); the full design is in
+[perf-dashboard-design.md](perf-dashboard-design.md).
+
 | Concern | Design |
 |---|---|
 | Live view | Backend scrapes every running worker's `/metrics` in parallel and sums them; the browser turns successive samples into rates. The last numbers of finished workers are remembered so totals never decrease (one gunicorn process, threads for concurrency) |
@@ -635,6 +688,8 @@ For routine clean-up prefer a bucket lifecycle rule (e.g. expire `runs/` after 9
 | Results and metrics | [04-results-flow.mmd](architecture/04-results-flow.mmd) | [04-results-flow.puml](architecture/04-results-flow.puml) |
 | Engine | [05-engine.mmd](architecture/05-engine.mmd) | [05-engine.puml](architecture/05-engine.puml) |
 | Deployment | [06-deployment.mmd](architecture/06-deployment.mmd) | [06-deployment.puml](architecture/06-deployment.puml) |
+| perf-dashboard components | [07-dashboard-components.mmd](architecture/07-dashboard-components.mmd) | [07-dashboard-components.puml](architecture/07-dashboard-components.puml) |
+| perf-dashboard flows | [08-dashboard-flows.mmd](architecture/08-dashboard-flows.mmd) | [08-dashboard-flows.puml](architecture/08-dashboard-flows.puml) |
 
 Render them with GitHub (Mermaid, automatic), [mermaid.live](https://mermaid.live), the IntelliJ / VS Code
 Mermaid and PlantUML plugins, or `java -jar plantuml.jar -tsvg docs/architecture/*.puml`.

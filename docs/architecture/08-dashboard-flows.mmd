@@ -1,0 +1,66 @@
+%% 8. perf-dashboard: the main flows
+sequenceDiagram
+    autonumber
+    actor T as Tester
+    participant UI as React app
+    participant API as Flask API
+    participant J as Java (convert-lr)
+    participant K as Kubernetes API
+    participant W as worker pods
+    participant M as MinIO
+
+    rect rgba(181,159,59,0.10)
+    Note over T,M: Test plans
+    T->>UI: create suite / upload zip or folder / edit file
+    UI->>API: POST /api/plans, /upload, PUT /file
+    API->>API: check names, paths, sizes, YAML syntax
+    API->>M: put test-plans/suite/...
+    end
+
+    rect rgba(181,159,59,0.10)
+    Note over T,M: Import LoadRunner script
+    T->>UI: VuGen folder or zip + new suite name
+    UI->>API: POST /api/plans/import-lr
+    API->>API: keep script files only, find Action*.c
+    API->>J: perf convert-lr dir --out dir (256 MB, 60 s)
+    J-->>API: plan, API catalog, data, conversion report
+    API->>M: put test-plans/suite/... (nothing if any step failed)
+    API-->>UI: notes + next steps
+    end
+
+    rect rgba(47,111,214,0.08)
+    Note over T,M: Start a run
+    T->>UI: New run (suite, plan, workers, env)
+    UI->>API: POST /api/loadtests
+    API->>M: plan file exists in the suite?
+    API->>K: create LoadTest (plan.s3 = suite)
+    API-->>UI: run created - open Run detail
+    end
+
+    rect rgba(23,162,184,0.08)
+    Note over T,M: Live view (while Running)
+    loop every 3 s
+        UI->>API: GET /api/loadtests/ns/name, /metrics
+        API->>K: LoadTest status, Jobs, Pods
+        API->>W: GET /metrics on every running worker (parallel)
+        API-->>UI: per-worker + summed counters (finished workers keep their last numbers)
+    end
+    end
+
+    rect rgba(217,142,4,0.08)
+    Note over T,M: Final numbers and report
+    UI->>API: GET /summary
+    API->>M: report/summary.json + logs/worker-i.json
+    T->>UI: Open report
+    UI->>API: GET /reports/runs/run/report/merged/index.html (+ js, css)
+    API->>M: stream objects (only under runs/, no ..)
+    end
+
+    rect rgba(192,57,43,0.06)
+    Note over T,M: Delete (finished runs only for results)
+    T->>UI: Delete run (+ results) / History: Delete
+    UI->>API: DELETE /api/loadtests/ns/name?results=true or /api/runs/folder
+    API->>K: run still active? then 409
+    API->>M: delete runs/run/ (logs, report, summary, tests copy)
+    API->>K: delete LoadTest (Jobs, pods go with it)
+    end

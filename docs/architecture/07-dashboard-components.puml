@@ -1,0 +1,66 @@
+@startuml 07-dashboard-components
+!include _theme.iuml
+title perf-dashboard - pages, API, backend modules
+left to right direction
+
+actor "Perf tester / QA\nbrowser" as tester
+
+package "React app (Vite build, served by Flask)" <<ns>> {
+  component "Runs\nall LoadTests" as runs_p <<ctrl>>
+  component "Run detail\nphases, live cards + charts,\nworkers table, logs, Delete" as run_p <<ctrl>>
+  component "New run\nsuite + plan, workers, env" as new_p <<ctrl>>
+  component "Test plans\nsuites, editor, upload,\nImport LoadRunner script" as plans_p <<input>>
+  component "History\nrun folders, Delete" as hist_p <<store>>
+}
+
+package "Flask (gunicorn: 1 process, 8 threads)" <<code>> {
+  component "routes/api.py\n/api/loadtests, /metrics, /summary,\n/api/runs, /api/pods/.../logs" as r_api <<code>>
+  component "routes/plans.py\n/api/plans/..., /import-lr" as r_plans <<code>>
+  component "routes/reports.py\n/reports/KEY" as r_rep <<code>>
+  component "kube.py\nLoadTests, Jobs, Pods, logs" as kube <<ctrl>>
+  component "live.py\nscrape + sum /metrics,\nremembers finished workers" as live <<obs>>
+  component "storage.py\nsummaries, run folders,\nreport files, delete" as storage <<store>>
+  component "plan_store.py\nsuites: list, read, save,\nupload, zip, delete" as pstore <<input>>
+  component "lr_import.py\nVuGen upload -> convert -> suite" as lri <<input>>
+}
+
+component "Java 17 + /opt/perf\nperf convert-lr\n(copied from the runner image)" as java <<lib>>
+collections "Kubernetes API\nLoadTest, Job, Pod, logs" as k8s <<ctrl>>
+component "worker pods\n:9464/metrics" as workers <<run>>
+database "MinIO bucket perf-results\ntest-plans/ + runs/" as minio <<store>>
+
+tester -[#2F6FD6,bold]-> runs_p : HTTPS via ingress
+tester -[#2F6FD6]-> plans_p
+
+runs_p -[#2F6FD6]-> r_api
+run_p -[#2F6FD6]-> r_api
+new_p -[#2F6FD6]-> r_api
+hist_p -[#2F6FD6]-> r_api
+plans_p -[#B59F3B]-> r_plans
+run_p -[#D98E04]-> r_rep : Open report
+hist_p -[#D98E04]-> r_rep
+
+r_api -[#2F6FD6]-> kube
+r_api -[#17A2B8]-> live
+r_api -[#D98E04]-> storage
+r_api -[#B59F3B,dashed]-> pstore : New run: suite + plan exist?
+r_plans -[#B59F3B]-> pstore
+r_plans -[#B59F3B]-> lri
+r_rep -[#D98E04]-> storage
+lri -[#B59F3B]-> java : convert-lr\n(256 MB, 60 s)
+lri -[#B59F3B]-> pstore : store the new suite
+
+kube -[#2F6FD6,bold]-> k8s
+live -[#17A2B8,dashed]-> workers : every 3 s, in parallel
+storage -[#D98E04,bold]-> minio : runs/
+pstore -[#B59F3B,bold]-> minio : test-plans/
+
+legend right
+  <b>Colour key</b>
+  |<#E3EEFF> pages / control |<#2F6FD6><color:#FFFFFF> runs, Kubernetes </color>|
+  |<#FFFBEA> test plans / LoadRunner |<#B59F3B><color:#FFFFFF> test files </color>|
+  |<#FFF3D9> results |<#D98E04><color:#FFFFFF> results, reports </color>|
+  |<#E0F5F7> live metrics |<#17A2B8><color:#FFFFFF> live metrics </color>|
+  |<#EFE8FB> Flask routes | |
+endlegend
+@enduml

@@ -30,6 +30,134 @@ Browser ──► perf-dashboard pod (gunicorn + Flask, serves the built React a
                                   runs/<run>/…          (summaries, report files; delete)
 ```
 
+### Components
+
+```mermaid
+%% 7. perf-dashboard: pages, API, backend modules and what they talk to
+flowchart LR
+    tester(["Perf tester / QA<br/>browser"])
+
+    subgraph ui["React app (Vite build, served by Flask)"]
+        runs_p["Runs<br/>all LoadTests"]
+        run_p["Run detail<br/>phases, live cards + charts,<br/>workers table, logs, Delete"]
+        new_p["New run<br/>suite + plan, workers, env"]
+        plans_p["Test plans<br/>suites, editor, upload,<br/>Import LoadRunner script"]
+        hist_p["History<br/>run folders, Delete"]
+    end
+
+    subgraph api["Flask (gunicorn: 1 process, 8 threads)"]
+        r_api["routes/api.py<br/>/api/loadtests, /metrics, /summary,<br/>/api/runs, /api/pods/.../logs"]
+        r_plans["routes/plans.py<br/>/api/plans/..., /import-lr"]
+        r_rep["routes/reports.py<br/>/reports/key"]
+        kube["kube.py<br/>LoadTests, Jobs, Pods, logs"]
+        live["live.py<br/>scrape + sum /metrics,<br/>remembers finished workers"]
+        storage["storage.py<br/>summaries, run folders,<br/>report files, delete"]
+        pstore["plan_store.py<br/>suites: list, read, save,<br/>upload, zip, delete"]
+        lri["lr_import.py<br/>VuGen upload -> convert -> suite"]
+    end
+
+    java["Java 17 + /opt/perf<br/>perf convert-lr<br/>(copied from the runner image)"]
+    k8s["Kubernetes API<br/>LoadTest, Job, Pod, logs"]
+    workers["worker pods<br/>:9464/metrics"]
+    minio[("MinIO bucket perf-results<br/>test-plans/ + runs/")]
+
+    tester -->|"HTTPS via ingress"| ui
+    runs_p & run_p & new_p & hist_p --> r_api
+    plans_p --> r_plans
+    run_p & hist_p -->|"Open report"| r_rep
+
+    r_api --> kube & live & storage
+    r_api -->|"New run: suite + plan exist?"| pstore
+    r_plans --> pstore & lri
+    r_rep --> storage
+    lri --> java
+    lri --> pstore
+
+    kube --> k8s
+    live --> workers
+    storage --> minio
+    pstore --> minio
+```
+
+<sub>Source: [`architecture/07-dashboard-components.mmd`](architecture/07-dashboard-components.mmd) · PlantUML: [`architecture/07-dashboard-components.puml`](architecture/07-dashboard-components.puml)</sub>
+
+Each page talks only to the Flask API; the API is the only part that reaches Kubernetes, the worker pods, MinIO
+and the converter. `routes/*` validate input and map errors to readable messages; `kube.py`, `live.py`,
+`storage.py`, `plan_store.py` and `lr_import.py` each own one outside system.
+
+### Main flows
+
+```mermaid
+%% 8. perf-dashboard: the main flows
+sequenceDiagram
+    autonumber
+    actor T as Tester
+    participant UI as React app
+    participant API as Flask API
+    participant J as Java (convert-lr)
+    participant K as Kubernetes API
+    participant W as worker pods
+    participant M as MinIO
+
+    rect rgba(181,159,59,0.10)
+    Note over T,M: Test plans
+    T->>UI: create suite / upload zip or folder / edit file
+    UI->>API: POST /api/plans, /upload, PUT /file
+    API->>API: check names, paths, sizes, YAML syntax
+    API->>M: put test-plans/suite/...
+    end
+
+    rect rgba(181,159,59,0.10)
+    Note over T,M: Import LoadRunner script
+    T->>UI: VuGen folder or zip + new suite name
+    UI->>API: POST /api/plans/import-lr
+    API->>API: keep script files only, find Action*.c
+    API->>J: perf convert-lr dir --out dir (256 MB, 60 s)
+    J-->>API: plan, API catalog, data, conversion report
+    API->>M: put test-plans/suite/... (nothing if any step failed)
+    API-->>UI: notes + next steps
+    end
+
+    rect rgba(47,111,214,0.08)
+    Note over T,M: Start a run
+    T->>UI: New run (suite, plan, workers, env)
+    UI->>API: POST /api/loadtests
+    API->>M: plan file exists in the suite?
+    API->>K: create LoadTest (plan.s3 = suite)
+    API-->>UI: run created - open Run detail
+    end
+
+    rect rgba(23,162,184,0.08)
+    Note over T,M: Live view (while Running)
+    loop every 3 s
+        UI->>API: GET /api/loadtests/ns/name, /metrics
+        API->>K: LoadTest status, Jobs, Pods
+        API->>W: GET /metrics on every running worker (parallel)
+        API-->>UI: per-worker + summed counters (finished workers keep their last numbers)
+    end
+    end
+
+    rect rgba(217,142,4,0.08)
+    Note over T,M: Final numbers and report
+    UI->>API: GET /summary
+    API->>M: report/summary.json + logs/worker-i.json
+    T->>UI: Open report
+    UI->>API: GET /reports/runs/run/report/merged/index.html (+ js, css)
+    API->>M: stream objects (only under runs/, no ..)
+    end
+
+    rect rgba(192,57,43,0.06)
+    Note over T,M: Delete (finished runs only for results)
+    T->>UI: Delete run (+ results) / History: Delete
+    UI->>API: DELETE /api/loadtests/ns/name?results=true or /api/runs/folder
+    API->>K: run still active? then 409
+    API->>M: delete runs/run/ (logs, report, summary, tests copy)
+    API->>K: delete LoadTest (Jobs, pods go with it)
+    end
+```
+
+<sub>Source: [`architecture/08-dashboard-flows.mmd`](architecture/08-dashboard-flows.mmd) · PlantUML: [`architecture/08-dashboard-flows.puml`](architecture/08-dashboard-flows.puml)</sub>
+
 ### Test plans and the per-run copy
 
 ```
